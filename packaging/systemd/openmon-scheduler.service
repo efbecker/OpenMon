@@ -1,0 +1,49 @@
+# /etc/systemd/system/openmon-scheduler.service
+# Avaliação de triggers, envio de notificações (SMTP/Telegram/Webhook),
+# relatórios agendados e limpeza de sessões expiradas.
+[Unit]
+Description=OpenMon agendador de alertas e relatórios
+After=network-online.target
+Wants=network-online.target
+PartOf=openmon.target
+
+[Service]
+Type=exec
+User=openmon
+Group=openmon
+WorkingDirectory=/opt/openmon
+Environment=PYTHONPATH=/opt/openmon/app
+Environment=OPENMON_CONFIG=/etc/openmon/openmon.conf
+ExecStart=/usr/bin/python3 -m openmon.scheduler
+Restart=always
+RestartSec=10s
+ReadWritePaths=/var/lib/openmon /var/log/openmon
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+
+[Install]
+WantedBy=openmon.target

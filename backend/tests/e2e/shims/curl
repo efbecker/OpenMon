@@ -1,0 +1,11 @@
+#!/bin/sh
+# Simula o download da chave apt do TimescaleDB com uma chave de teste local.
+out=""
+while [ $# -gt 0 ]; do
+    case "$1" in -o) out="$2"; shift ;; esac
+    shift
+done
+export GNUPGHOME="$(mktemp -d)"
+gpg --batch --quiet --passphrase '' --quick-gen-key "OpenMon E2E <e2e@example.invalid>" ed25519 sign never
+gpg --batch --armor --export > "${out:-/dev/stdout}"
+rm -rf "$GNUPGHOME"

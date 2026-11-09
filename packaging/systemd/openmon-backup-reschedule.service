@@ -1,0 +1,13 @@
+# /etc/systemd/system/openmon-backup-reschedule.service
+# Valida a expressão OnCalendar com systemd-analyze antes de aplicar.
+[Unit]
+Description=OpenMon aplica o novo agendamento do backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openmon/bin/openmon-backup-reschedule
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/systemd/system

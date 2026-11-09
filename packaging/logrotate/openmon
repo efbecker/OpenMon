@@ -1,0 +1,24 @@
+# /etc/logrotate.d/openmon
+# A aplicação usa WatchedFileHandler: reabre o arquivo sozinha após a rotação.
+/var/log/openmon/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    su openmon adm
+    create 0640 openmon adm
+}
+
+# auth.log fica mais tempo (investigação de incidentes / Fail2ban)
+/var/log/openmon/auth.log {
+    daily
+    rotate 180
+    compress
+    delaycompress
+    missingok
+    notifempty
+    su openmon adm
+    create 0640 openmon adm
+}

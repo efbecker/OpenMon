@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "[e2e] apt-get $* (simulado: pacotes já presentes na imagem)"

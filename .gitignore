@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+# Segredos nunca entram no repositório
+master.key
+database*.conf
+*.pem
+*.key
+.env

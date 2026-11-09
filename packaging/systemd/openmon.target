@@ -1,0 +1,7 @@
+# /etc/systemd/system/openmon.target - sobe/derruba todos os serviços do OpenMon
+[Unit]
+Description=OpenMon - plataforma de monitoramento
+Wants=openmon-api.service openmon-scheduler.service openmon-collector@vmware.service openmon-collector@hyperv.service openmon-collector@veeam.service openmon-collector@snmp.service openmon-backup.timer
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Aplica o agendamento do backup escolhido no painel do OpenMon.
+# Lê uma única linha OnCalendar de /var/lib/openmon/backup-schedule.conf,
+# valida com systemd-analyze e grava o drop-in do timer.
+set -euo pipefail
+REQ=/var/lib/openmon/backup-schedule.conf
+DROPIN_DIR=/etc/systemd/system/openmon-backup.timer.d
+[ -f "$REQ" ] || exit 0
+spec="$(head -n1 "$REQ" | tr -cd 'A-Za-z0-9*:/,.~ -')"
+[ -n "$spec" ] || { echo "agendamento vazio" >&2; exit 1; }
+systemd-analyze calendar "$spec" >/dev/null || { echo "OnCalendar inválido: $spec" >&2; exit 1; }
+install -d -m 0755 "$DROPIN_DIR"
+printf '[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$spec" > "$DROPIN_DIR/schedule.conf.new"
+mv -f "$DROPIN_DIR/schedule.conf.new" "$DROPIN_DIR/schedule.conf"
+systemctl daemon-reload
+systemctl restart openmon-backup.timer

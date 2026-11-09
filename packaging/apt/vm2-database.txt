@@ -1,0 +1,20 @@
+# OpenMon - VM 2 (PostgreSQL + TimescaleDB) - Debian 13 (Trixie) ou superior
+# Normalmente instalado pelo deploy remoto via SSH (openmon.deploy). Lista de referência.
+
+# --- Do repositório Debian (main)
+ca-certificates
+curl
+gnupg
+openssl
+nftables
+chrony
+postgresql-common
+unattended-upgrades
+
+# --- Do repositório oficial PGDG (apt.postgresql.org, suite trixie-pgdg)
+postgresql-17
+postgresql-client-17
+
+# --- Do repositório oficial TimescaleDB (packagecloud.io/timescale/timescaledb, suite trixie)
+timescaledb-2-postgresql-17
+timescaledb-tools

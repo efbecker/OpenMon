@@ -1,0 +1,10 @@
+# /etc/systemd/system/openmon-backup-reschedule.path
+# A API (sem privilégios) só grava o pedido; quem altera a unit é o root.
+[Unit]
+Description=OpenMon observa mudanças no agendamento do backup
+
+[Path]
+PathChanged=/var/lib/openmon/backup-schedule.conf
+
+[Install]
+WantedBy=multi-user.target

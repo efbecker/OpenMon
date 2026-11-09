@@ -1,0 +1,50 @@
+# /etc/systemd/system/openmon-api.service - API HTTP interna (atrás do Apache2)
+[Unit]
+Description=OpenMon API
+After=network-online.target
+Wants=network-online.target
+PartOf=openmon.target
+
+[Service]
+Type=exec
+User=openmon
+Group=openmon
+WorkingDirectory=/opt/openmon
+Environment=PYTHONPATH=/opt/openmon/app
+Environment=OPENMON_CONFIG=/etc/openmon/openmon.conf
+# Socket Unix: nenhuma porta TCP exposta; o Apache (www-data) acessa pelo grupo
+ExecStart=/usr/bin/python3 -m uvicorn openmon.api.main:app --uds /run/openmon/api.sock --workers 4 --proxy-headers --forwarded-allow-ips=* --no-server-header
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+# 0007: socket criado como 0770 (grupo www-data herdado do diretório setgid)
+UMask=0007
+ReadWritePaths=/run/openmon /var/lib/openmon /var/log/openmon
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=openmon.target

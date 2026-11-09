@@ -1,0 +1,5 @@
+#!/bin/sh
+case "$*" in
+    *timescaledb-2-postgresql-*) echo "2.x-e2e" ;;
+    *) exec /usr/bin/dpkg-query "$@" ;;
+esac

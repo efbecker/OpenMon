@@ -1,0 +1,46 @@
+# /etc/systemd/system/openmon-backup.service
+# Backup do OpenMon: configurações + pg_dump (formato custom) do banco na VM 2,
+# empacotado em /var/backups/openmon/openmon_<data>_<tipo>.tar.zst
+[Unit]
+Description=OpenMon backup da aplicação e do banco
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=openmon
+Group=openmon
+WorkingDirectory=/opt/openmon
+Environment=PYTHONPATH=/opt/openmon/app
+Environment=OPENMON_CONFIG=/etc/openmon/openmon.conf
+ExecStart=/usr/bin/python3 -m openmon.backup run --kind scheduled
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h
+ReadWritePaths=/var/backups/openmon /var/lib/openmon /var/log/openmon
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027

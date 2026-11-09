@@ -1,0 +1,50 @@
+# OpenMon - VM 1 (Frontend Web + Motor de Coleta) - Debian 13 (Trixie) ou superior
+# Instalação:  grep -v '^#' vm1-frontend.txt | xargs apt-get install -y --no-install-recommends
+# Todos do repositório oficial do Debian (main). Nenhum repositório de terceiros na VM 1.
+
+# --- Sistema e segurança
+ca-certificates
+curl
+openssl
+sudo
+chrony
+nftables
+fail2ban
+python3-systemd
+logrotate
+zstd
+unattended-upgrades
+
+# --- Servidor web (mod_ssl, mod_headers, mod_proxy* e mod_http2 já vêm no pacote apache2)
+apache2
+
+# --- Runtime Python (Debian 13 traz Python 3.13)
+python3
+python3-venv
+
+# --- API / web
+python3-fastapi
+python3-uvicorn
+python3-pydantic
+python3-multipart
+python3-jinja2
+
+# --- Banco (cliente na mesma versão major do servidor: pg_dump/pg_restore do backup)
+python3-asyncpg
+python3-psycopg
+postgresql-client-17
+
+# --- Segurança da aplicação
+python3-cryptography
+python3-argon2
+python3-bcrypt
+python3-jwt
+python3-ldap3
+
+# --- Coletores
+python3-httpx
+python3-paramiko
+python3-winrm
+python3-requests-ntlm
+python3-pyvmomi
+snmp
