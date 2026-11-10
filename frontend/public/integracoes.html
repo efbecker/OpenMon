@@ -17,6 +17,7 @@
       <nav class="nav" id="nav" hidden>
         <a href="/home.html">Início</a>
         <a href="/inventario.html">Inventário</a>
+        <a href="/backups.html">Backups</a>
         <a href="/integracoes.html" data-nav="global" class="active" aria-current="page">Integrações</a>
         <a href="/tenants.html" data-nav="global">Tenants</a>
         <a href="/usuarios.html" data-nav="admin">Usuários</a>
@@ -57,6 +58,41 @@
         </table>
       </div>
       <p class="muted small" id="empty" hidden>Nenhuma integração cadastrada ainda.</p>
+    </section>
+
+    <section class="card" id="rules-card" hidden>
+      <div class="section-head">
+        <div>
+          <h2>Regras de tenant <span class="count" id="rules-count"></span></h2>
+          <p class="muted small">Decidem de qual cliente é cada VM ou job de backup descoberto. Valem na próxima coleta,
+            em ordem de prioridade (menor primeiro); a primeira que casa decide e, sem regra, fica o tenant da
+            integração. Use <code>*</code> e <code>?</code> como curingas (sem diferenciar maiúsculas); em "Nome
+            (regex)" vale expressão regular. Ativo com o tenant fixado à mão no Inventário não muda.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="rules">
+          <thead><tr><th>Prioridade</th><th>Campo</th><th>Padrão</th><th>Tenant</th><th>Integração</th><th>Ativa</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="rules-empty" hidden>Nenhuma regra: tudo fica no tenant da integração.</p>
+      <form class="rule-form mt" id="rule-form" novalidate autocomplete="off">
+        <input id="r-priority" type="number" min="0" max="100000" value="100" aria-label="Prioridade" title="Prioridade (menor primeiro)">
+        <select id="r-field" aria-label="Campo">
+          <option value="folder">Pasta do vCenter</option>
+          <option value="resource_pool">Resource pool</option>
+          <option value="cluster">Cluster</option>
+          <option value="hyperv_host">Host Hyper-V</option>
+          <option value="veeam_job">Job do Veeam</option>
+          <option value="name_regex">Nome (regex)</option>
+        </select>
+        <input id="r-pattern" maxlength="300" spellcheck="false" placeholder="Clientes/ACME*" aria-label="Padrão">
+        <select id="r-tenant" aria-label="Tenant"></select>
+        <select id="r-integration" aria-label="Integração"><option value="">Todas as integrações</option></select>
+        <button type="submit" class="btn primary small-btn" id="r-save">Adicionar regra</button>
+      </form>
+      <p class="error-text" id="rules-error" hidden></p>
     </section>
 
     <section class="card" id="editor" hidden>
@@ -108,8 +144,8 @@
             <span class="label">Autenticação WinRM</span>
             <select id="f-transport">
               <option value="ntlm">NTLM</option>
-              <option value="kerberos">Kerberos</option>
-              <option value="credssp">CredSSP</option>
+              <option value="kerberos">Kerberos (requer python3-requests-kerberos)</option>
+              <option value="credssp">CredSSP (requer requests-credssp)</option>
             </select>
           </label>
           <label class="field full" data-kinds="hyperv">

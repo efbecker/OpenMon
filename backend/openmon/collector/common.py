@@ -118,6 +118,64 @@ class Writer:
         self.seen_assets.add(row["id"])
         return row["id"], row["tenant_id"]
 
+    async def assets_bulk(self, items: list[dict[str, Any]]) -> dict[str, tuple[int, int]]:
+        """Mesmo upsert de ``asset()`` para muitos ativos num comando só (5.000+ VMs por coleta).
+
+        Cada item: external_id, asset_type, name e opcionais tenant_id, parent_id, status, hostname, ip, vendor,
+        model, serial, os_name, attributes. Devolve {external_id: (asset_id, tenant_id efetivo)}.
+        """
+        out: dict[str, tuple[int, int]] = {}
+        items = list({str(it["external_id"]): it for it in items}.values())  # ON CONFLICT não aceita repetido
+        for i in range(0, len(items), 2000):
+            chunk = items[i:i + 2000]
+            cols: dict[str, list[Any]] = {k: [] for k in (
+                "tenant_id", "parent_id", "asset_type", "name", "external_id", "hostname", "ip", "vendor", "model",
+                "serial", "os_name", "status", "attributes")}
+            for it in chunk:
+                cols["tenant_id"].append(it.get("tenant_id") or self.integ.tenant_id)
+                cols["parent_id"].append(it.get("parent_id"))
+                cols["asset_type"].append(it["asset_type"])
+                cols["name"].append(str(it["name"])[:250])
+                cols["external_id"].append(str(it["external_id"]))
+                cols["ip"].append(valid_ip(it.get("ip")))
+                cols["attributes"].append(json.dumps(it.get("attributes") or {}, default=str))
+                cols["status"].append(it.get("status") or "up")
+                for k in ("hostname", "vendor", "model", "serial", "os_name"):
+                    v = it.get(k)
+                    cols[k].append(str(v)[:250] if v else None)
+            rows = await self.conn.fetch(
+                """INSERT INTO assets (tenant_id, integration_id, parent_id, asset_type, name, external_id, hostname,
+                                       ip_address, vendor, model, serial_number, os_name, status, attributes,
+                                       last_seen_at, last_status_change_at)
+                   SELECT u.tenant_id, $1, u.parent_id, u.asset_type, u.name, u.external_id, u.hostname, u.ip::inet,
+                          u.vendor, u.model, u.serial, u.os_name, u.status, u.attributes::jsonb, now(), now()
+                     FROM unnest($2::bigint[], $3::bigint[], $4::text[], $5::text[], $6::text[], $7::text[],
+                                 $8::text[], $9::text[], $10::text[], $11::text[], $12::text[], $13::text[],
+                                 $14::text[])
+                          AS u(tenant_id, parent_id, asset_type, name, external_id, hostname, ip, vendor, model,
+                               serial, os_name, status, attributes)
+                   ON CONFLICT (integration_id, external_id) WHERE external_id IS NOT NULL DO UPDATE SET
+                       tenant_id = CASE WHEN assets.tenant_locked THEN assets.tenant_id ELSE EXCLUDED.tenant_id END,
+                       parent_id = EXCLUDED.parent_id, asset_type = EXCLUDED.asset_type, name = EXCLUDED.name,
+                       hostname = coalesce(EXCLUDED.hostname, assets.hostname),
+                       ip_address = coalesce(EXCLUDED.ip_address, assets.ip_address),
+                       vendor = coalesce(EXCLUDED.vendor, assets.vendor),
+                       model = coalesce(EXCLUDED.model, assets.model),
+                       serial_number = coalesce(EXCLUDED.serial_number, assets.serial_number),
+                       os_name = coalesce(EXCLUDED.os_name, assets.os_name),
+                       last_status_change_at = CASE WHEN assets.status <> EXCLUDED.status THEN now()
+                                                    ELSE assets.last_status_change_at END,
+                       status = EXCLUDED.status, attributes = assets.attributes || EXCLUDED.attributes,
+                       last_seen_at = now(), deleted_at = NULL, updated_at = now()
+                   RETURNING external_id, id, tenant_id""",
+                self.integ.id, cols["tenant_id"], cols["parent_id"], cols["asset_type"], cols["name"],
+                cols["external_id"], cols["hostname"], cols["ip"], cols["vendor"], cols["model"], cols["serial"],
+                cols["os_name"], cols["status"], cols["attributes"])
+            for r in rows:
+                out[r["external_id"]] = (r["id"], r["tenant_id"])
+                self.seen_assets.add(r["id"])
+        return out
+
     def metric(self, asset_id: int, tenant_id: int, key: str, value: float | int | None,
                at: datetime | None = None) -> None:
         if value is None:

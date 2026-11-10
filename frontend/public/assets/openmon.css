@@ -257,3 +257,7 @@ details.advanced.full { grid-column: 1 / -1; margin-top: 0; }
 .test-result dt { color: var(--muted); }
 .test-result dd { margin: 0; font-family: var(--mono); word-break: break-word; }
 #d-stats .v { font-size: 13px; }
+.rule-form { display: grid; grid-template-columns: 90px 170px minmax(160px, 1fr) 180px 200px auto; gap: 10px; align-items: center; }
+.rule-form input, .rule-form select { padding: 9px 10px; font-size: 13.5px; }
+@media (max-width: 900px) { .rule-form { grid-template-columns: 1fr 1fr; } }
+.table td.wrap { white-space: normal; max-width: 420px; }

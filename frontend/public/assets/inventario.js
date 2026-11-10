@@ -83,7 +83,7 @@
       const tr = el("tr", { cls: a.deleted_at ? "row-off" : a.status === "down" ? "row-warn" : "" },
         name, el("td", { text: TYPE[a.asset_type] || a.asset_type }), tenant,
         el("td", { cls: "mono small", text: a.ip || a.hostname || "—" }),
-        el("td", { cls: "small", text: [a.vendor, a.model].filter(Boolean).join(" ") || (a.attributes.guest_os || "—") }),
+        el("td", { cls: "small", text: (a.asset_type === "vm" && a.attributes.guest_os) || [a.vendor, a.model].filter(Boolean).join(" ") || "—" }),
         el("td", null, a.deleted_at ? el("span", { cls: "tag tag-off", text: "removido" }) : tag(a.status)),
         el("td", { cls: "small", text: reading(a) }), el("td", { text: a.interfaces ? String(a.interfaces) : "—" }),
         el("td", { cls: "small", text: when(a.last_seen_at, "nunca") }),

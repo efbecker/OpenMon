@@ -78,8 +78,9 @@ atualizar, rode o mesmo comando.
 | 5c. Tenants e usuários por tenant (RBAC, RLS, senha provisória, auditoria) | ✅ [docs/05-tenants-e-usuarios.md](docs/05-tenants-e-usuarios.md) |
 | 5d. Login AD/LDAP opcional (LDAPS/StartTLS, grupos → perfil + tenant, cofre AES-256-GCM) | ✅ [docs/06-active-directory.md](docs/06-active-directory.md) |
 | 6a. Coletor SNMP v2c/v3, telas Integrações e Inventário, links de clientes | ✅ [docs/07-integracoes.md](docs/07-integracoes.md) |
-| 6b. Coletores vCenter, Hyper-V (WinRM) e Veeam (REST) | em andamento |
-| 7. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
+| 6b. Coletores vCenter (lote, 5.000+ VMs), Hyper-V (WinRM) e Veeam (REST), tela Backups com SLA, regras de tenant | ✅ [docs/07-integracoes.md](docs/07-integracoes.md) |
+| 7. Alertas e notificações (e-mail, Telegram, webhook) | em andamento |
+| 8. Dashboards, relatórios (PDF/CSV, 60 meses), backup/restauração | — |
 
 ## Estrutura do repositório
 
@@ -90,7 +91,7 @@ backend/
   openmon/deploy/          deploy do banco via SSH (paramiko), tuning, SCRAM, CLI
   openmon/deploy/remote/   scripts bash executados na VM 2
   openmon/api/             API FastAPI (assistente de instalação em /api/setup)
-  openmon/collector/       coletores (openmon-collector@<tipo>): motor, cliente SNMP v2c/v3, SNMP
+  openmon/collector/       coletores (openmon-collector@<tipo>): motor, SNMP v2c/v3, vCenter, Hyper-V, Veeam
 frontend/public/           interface web estática (HTML/CSS/JS, compatível com CSP estrita)
   tests/                   testes unitários (pytest) e e2e/ (deploy real via SSH em container)
 packaging/

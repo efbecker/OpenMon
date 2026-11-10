@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Backups</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/backups.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/backups.html" class="active" aria-current="page">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Backups <span class="count" id="count"></span></h2>
+          <p class="muted small" id="intro">Jobs do Veeam Backup &amp; Replication, a última execução e o SLA: o job está
+            em dia quando o último backup bom (sucesso ou aviso) terminou dentro das horas contratadas do tenant.</p>
+        </div>
+        <div class="head-actions">
+          <select class="filter" id="filter-tenant" aria-label="Filtrar por tenant"><option value="">Todos os tenants</option></select>
+          <select class="filter" id="filter-state" aria-label="Filtrar por situação">
+            <option value="">Todos os jobs</option>
+            <option value="out">Fora do SLA</option>
+            <option value="failed">Última execução falhou</option>
+          </select>
+        </div>
+      </div>
+      <div class="stats" id="summary"></div>
+      <p class="error-text" id="list-error" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Job</th><th>Tenant</th><th>Tipo</th><th>Última execução</th><th>Resultado</th>
+            <th>Último backup bom</th><th>SLA</th><th>Repositório</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum job de backup ainda. Cadastre a integração do Veeam em Integrações.</p>
+    </section>
+
+    <section class="card" id="runs-card" hidden>
+      <div class="section-head">
+        <div>
+          <h2 id="runs-title"></h2>
+          <p class="muted small">Últimas 50 execuções.</p>
+        </div>
+        <div class="head-actions"><button type="button" class="btn ghost" id="btn-close">Fechar</button></div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="runs">
+          <thead><tr><th>Início</th><th>Fim</th><th>Duração</th><th>Resultado</th><th>Mensagem</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="repos-card" hidden>
+      <h2>Repositórios <span class="count" id="repos-count"></span></h2>
+      <div class="table-wrap">
+        <table class="table" id="repos">
+          <thead><tr><th>Nome</th><th>Servidor</th><th>Tipo</th><th>Caminho</th><th>Capacidade</th><th>Livre</th>
+            <th>Uso</th><th>Situação</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

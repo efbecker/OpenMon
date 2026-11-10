@@ -1,6 +1,6 @@
 [project]
 name = "openmon"
-version = "0.4.0"
+version = "0.5.0"
 description = "Plataforma multi-tenant de monitoramento de datacenter (VMware, Hyper-V, Veeam, SNMP)"
 requires-python = ">=3.11"
 # Em produção as dependências vêm do apt do Debian 13 (packaging/apt/vm1-frontend.txt).

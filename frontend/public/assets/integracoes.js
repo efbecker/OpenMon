@@ -60,6 +60,7 @@
       $("btn-new").hidden = !canManage;
       showError("list-error", "");
       render();
+      await loadRules();
     } catch (e) {
       if (e.status === 403) { $("main").hidden = true; $("denied").hidden = false; return; }
       showError("list-error", e.message);
@@ -82,6 +83,96 @@
       btn.textContent = "Coletar agora";
     }
   }
+
+  // --------------------------------------------------------- regras de tenant
+  const FIELD = { folder: "Pasta do vCenter", resource_pool: "Resource pool", cluster: "Cluster",
+    hyperv_host: "Host Hyper-V", veeam_job: "Job do Veeam", name_regex: "Nome (regex)", vsphere_tag: "Tag do vSphere" };
+  const PLACEHOLDER = { folder: "Clientes/ACME*", resource_pool: "ACME*", cluster: "CL-CLIENTES-*",
+    hyperv_host: "hv0?.empresa.local", veeam_job: "ACME - *", name_regex: "^acme-" };
+  let rules = [];
+  let editingRule = null;
+
+  function resetRuleForm() {
+    editingRule = null;
+    $("r-priority").value = "100";
+    $("r-pattern").value = "";
+    $("r-save").textContent = "Adicionar regra";
+    $("r-pattern").placeholder = PLACEHOLDER[$("r-field").value] || "";
+  }
+
+  function renderRules() {
+    const tSel = $("r-tenant");
+    const cur = tSel.value;
+    tSel.replaceChildren(...tenants.filter((t) => t.is_active).map((t) => el("option", { text: t.name, attrs: { value: String(t.id) } })));
+    if (cur) tSel.value = cur;
+    const iSel = $("r-integration");
+    const icur = iSel.value;
+    iSel.replaceChildren(el("option", { text: "Todas as integrações", attrs: { value: "" } }),
+      ...items.filter((i) => i.kind !== "snmp").map((i) => el("option", { text: `${i.name} (${KIND[i.kind]})`, attrs: { value: String(i.id) } })));
+    iSel.value = icur;
+    $("rules").tBodies[0].replaceChildren(...rules.map((r) => {
+      const on = el("input", { attrs: { type: "checkbox", "aria-label": "Regra ativa" } });
+      on.checked = r.is_enabled;
+      on.addEventListener("change", () => saveRule(r.id, Object.assign(ruleBody(r), { is_enabled: on.checked })));
+      const act = el("td", null, button("Editar", "ghost", () => {
+        editingRule = r;
+        $("r-priority").value = r.priority;
+        $("r-field").value = r.match_field;
+        $("r-pattern").value = r.pattern;
+        $("r-tenant").value = String(r.tenant_id);
+        $("r-integration").value = r.integration_id ? String(r.integration_id) : "";
+        $("r-save").textContent = "Salvar regra";
+        $("r-pattern").focus();
+      }), button("Excluir", "ghost", async () => {
+        if (!confirm(`Excluir a regra "${r.pattern}" → ${r.tenant_name}? Os ativos já atribuídos ficam onde estão até a próxima coleta.`)) return;
+        try { await api("DELETE", `/api/admin/tenant-rules/${r.id}`); await loadRules(); } catch (e) { showError("rules-error", e.message); }
+      }));
+      return el("tr", { cls: r.is_enabled ? "" : "row-off" }, el("td", { cls: "mono", text: String(r.priority) }),
+        el("td", { text: FIELD[r.match_field] || r.match_field }), el("td", { cls: "mono", text: r.pattern }),
+        el("td", { text: r.tenant_name }), el("td", { text: r.integration_name || "todas" }), el("td", null, on), act);
+    }));
+    $("rules-count").textContent = rules.length ? `(${rules.length})` : "";
+    $("rules-empty").hidden = rules.length > 0;
+  }
+
+  function ruleBody(r) {
+    return { tenant_id: r.tenant_id, integration_id: r.integration_id, match_field: r.match_field, pattern: r.pattern,
+      priority: r.priority, is_enabled: r.is_enabled };
+  }
+
+  async function saveRule(id, body) {
+    showError("rules-error", "");
+    try {
+      if (id) await api("PUT", `/api/admin/tenant-rules/${id}`, body);
+      else await api("POST", "/api/admin/tenant-rules", body);
+      resetRuleForm();
+      await loadRules();
+    } catch (e) {
+      showError("rules-error", e.message);
+    }
+  }
+
+  async function loadRules() {
+    if (!canManage) return;
+    try {
+      rules = (await api("GET", "/api/admin/tenant-rules")).rules;
+      $("rules-card").hidden = false;
+      renderRules();
+    } catch (e) {
+      showError("rules-error", e.message);
+    }
+  }
+
+  $("r-field").addEventListener("change", () => { $("r-pattern").placeholder = PLACEHOLDER[$("r-field").value] || ""; });
+  $("rule-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const body = { priority: Number($("r-priority").value) || 100, match_field: $("r-field").value,
+      pattern: $("r-pattern").value.trim(), tenant_id: Number($("r-tenant").value),
+      integration_id: $("r-integration").value ? Number($("r-integration").value) : null,
+      is_enabled: editingRule ? editingRule.is_enabled : true };
+    if (!body.pattern || !body.tenant_id) return showError("rules-error", "Informe o padrão e o tenant.");
+    saveRule(editingRule ? editingRule.id : null, body);
+  });
 
   // ------------------------------------------------------------- formulário
   function syncKind() {
@@ -266,6 +357,7 @@
 
   $("btn-cancel").addEventListener("click", () => { $("editor").hidden = true; });
   $("btn-new").addEventListener("click", () => openForm(null));
+  resetRuleForm();
 
   Object.entries(KIND).forEach(([k, label]) => {
     $("f-kind").append(el("option", { text: label, attrs: { value: k } }));
