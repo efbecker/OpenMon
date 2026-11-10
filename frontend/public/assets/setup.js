@@ -63,8 +63,12 @@
       return;
     }
     if (!status.setup_open) {
-      showClosed("Banco de dados já provisionado",
-        "O assistente de instalação foi encerrado. Para refazer o deploy, rode o instalador novamente no Servidor 1 com --new-setup-token.");
+      if (status.admin_created || status.db_provisioned) {
+        location.replace("/login.html");  // instalação concluída: o sistema começa no login
+        return;
+      }
+      showClosed("Assistente de instalação encerrado",
+        "Não há token de instalação ativo. No Servidor 1, rode o instalador de novo (o mesmo comando curl) para gerar um novo token.");
       return;
     }
     if (token) {
@@ -80,18 +84,104 @@
     show("closed-card", true);
     show("token-card", false);
     show("deploy-card", false);
+    show("admin-card", false);
+  }
+
+  function showDeploy() {
+    show("admin-card", false);
+    show("deploy-card", true);
+    show("terminal-card", true);
+    $("host").focus();
   }
 
   function showWizard(status) {
     show("token-card", false);
-    show("deploy-card", true);
-    show("terminal-card", true);
-    $("host").focus();
     if (status && status.deploy_status === "running") {
       // Recarregou a página no meio do deploy: retoma o terminal
+      showDeploy();
       startPolling();
+      return;
     }
+    if (status && status.db_provisioned) return showAdminStep();
+    showDeploy();
   }
+
+  // ---------------------------------------------------------------- administrador
+  async function showAdminStep() {
+    setError("admin-error", "");
+    let r;
+    try {
+      r = await api("GET", "/api/setup/admin");
+    } catch (e) {
+      show("admin-card", true);
+      show("admin-form", true);
+      show("admin-exists", false);
+      setError("admin-error", e.message);
+      return;
+    }
+    show("deploy-card", false);
+    show("admin-card", true);
+    show("admin-form", r.needed);
+    show("admin-exists", !r.needed);
+    $("admin-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (r.needed) $("admin-password").focus();
+  }
+
+  function setupDone(username) {
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) { /* ignora */ }
+    token = "";
+    ["admin-card", "deploy-card", "terminal-card", "token-card"].forEach((id) => show(id, false));
+    show("done-card", true);
+    const target = username ? `/login.html?u=${encodeURIComponent(username)}` : "/login.html";
+    $("done-link").href = target;
+    $("done-text").textContent = username
+      ? `Administrador "${username}" criado. Redirecionando para a tela de login…`
+      : "Assistente encerrado. Redirecionando para a tela de login…";
+    setTimeout(() => location.assign(target), 2500);
+  }
+
+  $("admin-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    setError("admin-error", "");
+    const pw = $("admin-password").value;
+    if (pw.length < 12) return setError("admin-error", "A senha precisa ter pelo menos 12 caracteres.");
+    if (pw !== $("admin-password2").value) return setError("admin-error", "As senhas não conferem.");
+    const body = {
+      username: $("admin-username").value.trim(),
+      display_name: $("admin-name").value.trim() || null,
+      email: $("admin-email").value.trim() || null,
+      password: pw,
+      password_confirm: $("admin-password2").value,
+    };
+    $("btn-admin").disabled = true;
+    try {
+      const r = await api("POST", "/api/setup/admin", body);
+      $("admin-password").value = "";
+      $("admin-password2").value = "";
+      setupDone(r.username);
+    } catch (e) {
+      if (e.status === 409 && /administrador/.test(e.message)) {
+        show("admin-form", false);
+        show("admin-exists", true);
+      } else {
+        setError("admin-error", e.message);
+      }
+    } finally {
+      $("btn-admin").disabled = false;
+    }
+  });
+
+  $("btn-finish").addEventListener("click", async () => {
+    try {
+      await api("POST", "/api/setup/finish");
+      setupDone("");
+    } catch (e) {
+      setError("admin-error", e.message);
+    }
+  });
+
+  ["btn-redeploy", "btn-redeploy2"].forEach((id) => $(id).addEventListener("click", showDeploy));
+  $("btn-to-admin").addEventListener("click", showAdminStep);
 
   $("token-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -308,12 +398,13 @@
       ["Jobs de compressão/retenção", info.background_jobs], ["Schema", info.schema_version],
     ] : [["Erro", r.error || "veja o terminal acima"]]);
     $("result-note").textContent = ok
-      ? "As credenciais SSH foram descartadas. A configuração do banco foi gravada em /etc/openmon/database/ e o assistente foi encerrado."
+      ? "As credenciais SSH foram descartadas e a configuração do banco foi gravada em /etc/openmon/database/. Falta só criar o administrador."
       : "Nada foi gravado no Servidor 1. Corrija o problema e rode o deploy de novo: ele é idempotente.";
     show("result-box", true);
+    show("result-actions", ok);
     if (ok) {
-      try { sessionStorage.removeItem(TOKEN_KEY); } catch (_) { /* ignora */ }
       show("deploy-card", false);
+      showAdminStep();
     }
   }
 

@@ -28,3 +28,12 @@ def setup_token_file() -> Path:
 
 def db_provisioned() -> bool:
     return (db_config_dir() / "database.conf").is_file()
+
+
+def setup_done_file() -> Path:
+    """Marcador gravado quando o primeiro administrador é criado (fim do assistente)."""
+    return state_dir() / "setup.done"
+
+
+def admin_created() -> bool:
+    return setup_done_file().is_file()

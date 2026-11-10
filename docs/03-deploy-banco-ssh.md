@@ -76,8 +76,8 @@ Depois do `curl ... | sudo bash` na VM 1, abra `https://IP_DA_VM1/`:
    `/var/lib/openmon/setup.token`. Enquanto não há banco nem usuários, ele é a
    única chave do assistente: vai no cabeçalho `X-Setup-Token` (sem cookie, então
    sem CSRF), é comparado em tempo constante, tem rate limit por IP (10 erros em
-   15 min) e cada erro vai para `/var/log/openmon/auth.log` (Fail2ban). É apagado
-   quando o deploy termina com sucesso.
+   15 min) e cada erro vai para `/var/log/openmon/auth.log` (Fail2ban). Continua
+   valendo depois do deploy, só para a etapa do administrador (item 5).
 2. **Formulário** igual ao do OpenFlow: IP e porta SSH do Servidor 2, usuário com
    sudo, senha e IP do Servidor 1 (preenchido sozinho pela rota até a VM 2).
    Em "Opções avançadas": senha do sudo diferente e CIDR para restringir o SSH.
@@ -87,10 +87,14 @@ Depois do `curl ... | sudo bash` na VM 1, abra `https://IP_DA_VM1/`:
 4. **Fazer Deploy**: barra de progresso pelas etapas e terminal ao vivo
    (polling de `GET /api/setup/database/deploy?since=N`). A senha é apagada do
    formulário assim que o deploy começa e nunca volta para o navegador.
+5. **Criar o administrador global**: aparece logo depois do deploy. Ao criar,
+   o token é apagado, `/var/lib/openmon/setup.done` é gravado e o navegador vai
+   para a tela de login. Detalhes em [04-login-e-sessoes.md](04-login-e-sessoes.md).
 
 Rotas (`openmon/api/setup.py`): `GET /api/setup/status`, `POST /api/setup/token/verify`,
 `POST /api/setup/database/frontend-ip`, `POST /api/setup/database/ssh-test`,
-`POST /api/setup/database/deploy`, `GET /api/setup/database/deploy`.
+`POST /api/setup/database/deploy`, `GET /api/setup/database/deploy`,
+`GET|POST /api/setup/admin`, `POST /api/setup/finish`.
 
 A configuração gerada vai para `/etc/openmon/database/` (dono `openmon`, 0600),
 o único ponto de `/etc` gravável pelo serviço (`ReadWritePaths` na unit).
@@ -120,7 +124,7 @@ Cada evento traz `kind` (`step`, `log`, `info`, `warn`, `error`, `success`),
 
 ## Testes
 
-* `pytest backend/tests`: 28 testes unitários (SCRAM conferido com um verificador
+* `pytest backend/tests`: testes unitários (SCRAM conferido com um verificador
   gerado pelo próprio PostgreSQL 17, tuning, validação de entradas, citação no
   shell, fluxo completo com SSH simulado, TLS `verify-full` com os mesmos comandos
   `openssl` do script, inclusive o modo estrito do Python 3.13).

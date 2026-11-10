@@ -7,11 +7,12 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from openmon import __version__
-from openmon.api import setup
+from openmon.api import auth, setup
 
 # Sem /docs nem /openapi.json em produção: menos superfície exposta
 app = FastAPI(title="OpenMon", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(setup.router)
+app.include_router(auth.router)
 
 
 @app.get("/api/health")

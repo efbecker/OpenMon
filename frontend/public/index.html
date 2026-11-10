@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OpenMon · Deploy do banco</title>
+  <title>OpenMon · Instalação</title>
   <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
   <script src="assets/setup.js?v=__VERSION__" defer></script>
@@ -53,6 +53,65 @@
       <h2 id="closed-title">Banco de dados já provisionado</h2>
       <p class="muted" id="closed-text">O assistente de instalação foi encerrado. Para refazer o deploy, rode o
         instalador novamente no Servidor 1 com <code>--new-setup-token</code>.</p>
+      <div class="actions">
+        <a class="btn deploy" href="/login.html">Ir para a tela de login</a>
+      </div>
+    </section>
+
+    <!-- Etapa 2: primeiro administrador -->
+    <section class="card" id="admin-card" hidden>
+      <span class="badge">Etapa 2 de 2 · Banco de dados pronto</span>
+      <h2 class="mt">Criar o administrador global</h2>
+      <p class="muted">Esta é a primeira conta do OpenMon, com acesso a todos os tenants e à configuração do
+        sistema. A senha é guardada só como hash Argon2id. Depois disso o assistente é encerrado e o acesso passa a
+        ser pela tela de login.</p>
+
+      <form id="admin-form" autocomplete="off" novalidate>
+        <div class="grid two">
+          <label class="field">
+            <span class="label">Usuário</span>
+            <input id="admin-username" required value="admin" spellcheck="false" autocapitalize="off" autocomplete="username">
+          </label>
+          <label class="field">
+            <span class="label">Nome de exibição (opcional)</span>
+            <input id="admin-name" placeholder="Administrador do Datacenter">
+          </label>
+          <label class="field full">
+            <span class="label">E-mail (opcional)</span>
+            <input id="admin-email" type="email" placeholder="noc@exemplo.com.br" spellcheck="false">
+          </label>
+          <label class="field">
+            <span class="label">Senha (mínimo 12 caracteres)</span>
+            <input id="admin-password" type="password" required autocomplete="new-password" minlength="12">
+          </label>
+          <label class="field">
+            <span class="label">Confirme a senha</span>
+            <input id="admin-password2" type="password" required autocomplete="new-password" minlength="12">
+          </label>
+        </div>
+        <p class="error-text" id="admin-error" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="btn-redeploy">Refazer o deploy do banco</button>
+          <button type="submit" class="btn deploy" id="btn-admin">Criar administrador e ir para o login</button>
+        </div>
+      </form>
+
+      <div id="admin-exists" hidden>
+        <p class="ok-text">Este banco já tem um administrador.</p>
+        <div class="actions">
+          <button type="button" class="btn ghost" id="btn-redeploy2">Refazer o deploy do banco</button>
+          <button type="button" class="btn deploy" id="btn-finish">Encerrar o assistente e ir para o login</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Concluído -->
+    <section class="card done" id="done-card" hidden>
+      <h2>Instalação concluída</h2>
+      <p class="muted" id="done-text">Administrador criado. Redirecionando para a tela de login…</p>
+      <div class="actions">
+        <a class="btn deploy" href="/login.html" id="done-link">Ir para a tela de login</a>
+      </div>
     </section>
 
     <!-- Formulário -->
@@ -149,6 +208,9 @@
         <h2 id="result-title"></h2>
         <dl id="result-list"></dl>
         <p class="muted small" id="result-note"></p>
+        <div class="actions" id="result-actions" hidden>
+          <button type="button" class="btn deploy" id="btn-to-admin">Próximo: criar o administrador</button>
+        </div>
       </div>
     </section>
   </main>

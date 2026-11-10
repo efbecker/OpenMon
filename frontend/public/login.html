@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Entrar</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/login.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+    </div>
+    <div class="topbar-right"><span class="pill">monitoramento</span></div>
+  </header>
+
+  <main class="auth-page">
+    <section class="card auth-card">
+      <h1>Entrar no OpenMon</h1>
+      <p class="muted small">Conta local ou do Active Directory/LDAP (quando configurado).</p>
+
+      <div class="note" id="setup-note" hidden>
+        A instalação ainda não foi concluída. <a href="/">Abrir o assistente de instalação</a>.
+      </div>
+
+      <form id="login-form" autocomplete="on" novalidate>
+        <label class="field">
+          <span class="label">Usuário</span>
+          <input id="login-username" name="username" required autocomplete="username" spellcheck="false" autocapitalize="off">
+        </label>
+        <label class="field">
+          <span class="label">Senha</span>
+          <input id="login-password" name="password" type="password" required autocomplete="current-password">
+        </label>
+        <p class="error-text" id="login-error" hidden></p>
+        <button type="submit" class="btn deploy" id="btn-login">Entrar</button>
+      </form>
+      <p class="muted small auth-foot">Acesso registrado e auditado. Após 5 tentativas erradas a conta é bloqueada por 15 minutos.</p>
+    </section>
+  </main>
+</body>
+</html>

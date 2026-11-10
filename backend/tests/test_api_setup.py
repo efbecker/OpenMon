@@ -34,7 +34,8 @@ FORM = {"host": "10.0.0.20", "port": 22, "username": "admin", "password": "segre
 
 def test_status_is_public(client):
     r = client.get("/api/setup/status")
-    assert r.json() == {"setup_open": True, "db_provisioned": False, "deploy_status": "idle"}
+    assert r.json() == {"setup_open": True, "db_provisioned": False, "admin_created": False,
+                        "deploy_status": "idle"}
 
 
 def test_token_required_and_logged_for_fail2ban(client):
@@ -89,7 +90,7 @@ def test_deploy_requires_fingerprint(client):
     assert r.status_code == 422
 
 
-def test_deploy_flow_closes_wizard(client, monkeypatch):
+def test_deploy_flow_keeps_wizard_open_for_admin_step(client, monkeypatch):
     def fake_run(self):
         self._emit("step", "[1/9] Validando", 12)
         assert self.req.frontend_address == "10.0.0.10/32"
@@ -107,11 +108,80 @@ def test_deploy_flow_closes_wizard(client, monkeypatch):
     assert snap["status"] == "success"
     assert snap["events"][0]["message"] == "[1/9] Validando"
     assert "x" * 32 not in json.dumps(snap)  # senha do banco nunca volta para o navegador
-    assert not (client.tmp / "state" / "setup.token").exists()
-    # quem acompanhava ainda lê o resultado; todo o resto fica fechado
-    assert client.get("/api/setup/database/deploy", headers=H).status_code == 200
-    assert client.post("/api/setup/database/deploy", headers=H, json=body).status_code == 403
+    # o token continua valendo para a etapa seguinte (criar o administrador)
+    assert (client.tmp / "state" / "setup.token").exists()
+    assert client.get("/api/setup/status").json()["admin_created"] is False
 
 
 def test_health(client):
     assert client.get("/api/health").json()["status"] == "ok"
+
+
+# -----------------------------------------------------------------------------
+# Primeiro administrador
+# -----------------------------------------------------------------------------
+ADMIN = {"username": "admin", "password": "Correta-Cavalo-Bateria-9", "password_confirm": "Correta-Cavalo-Bateria-9"}
+
+
+@pytest.fixture()
+def provisioned(client, monkeypatch):
+    (client.tmp / "etc" / "database" / "database.conf").write_text("[database]\n")
+    created = []
+
+    async def fake_create(form, password_hash, ip, ua):
+        if created:
+            return None
+        created.append((form.username, password_hash))
+        return 1
+
+    async def fake_exists():
+        return bool(created)
+    monkeypatch.setattr(setup, "create_first_admin", fake_create)
+    monkeypatch.setattr(setup, "users_exist", fake_exists)
+    client.created = created
+    return client
+
+
+def test_admin_requires_database(client):
+    assert client.post("/api/setup/admin", headers=H, json=ADMIN).status_code == 409
+
+
+def test_admin_requires_token(provisioned):
+    assert provisioned.post("/api/setup/admin", json=ADMIN).status_code == 401
+
+
+@pytest.mark.parametrize("change,msg", [
+    ({"password": "curta", "password_confirm": "curta"}, "12"),
+    ({"password_confirm": "outra-coisa-qualquer"}, "não conferem"),
+    ({"password": "admin-admin-123", "password_confirm": "admin-admin-123"}, "nome de usuário"),
+])
+def test_admin_password_policy(provisioned, change, msg):
+    r = provisioned.post("/api/setup/admin", headers=H, json={**ADMIN, **change})
+    assert r.status_code == 422 and msg in r.json()["detail"]
+    assert provisioned.created == []
+
+
+def test_admin_creation_closes_setup(provisioned):
+    assert provisioned.get("/api/setup/admin", headers=H).json() == {"needed": True}
+    r = provisioned.post("/api/setup/admin", headers=H, json=ADMIN)
+    assert r.status_code == 201 and r.json()["redirect"] == "/login.html"
+    username, password_hash = provisioned.created[0]
+    assert username == "admin" and password_hash.startswith("$argon2id$")
+    assert ADMIN["password"] not in password_hash
+    st = provisioned.get("/api/setup/status").json()
+    assert st["setup_open"] is False and st["admin_created"] is True
+    assert not (provisioned.tmp / "state" / "setup.token").exists()
+    # assistente fechado: nada mais aceita o token antigo
+    assert provisioned.post("/api/setup/admin", headers=H, json=ADMIN).status_code == 403
+    assert provisioned.post("/api/setup/database/ssh-test", headers=H, json=FORM).status_code == 403
+    log = (provisioned.tmp / "log" / "auth.log").read_text()
+    assert '"event":"setup.admin_created"' in log and ADMIN["password"] not in log
+
+
+def test_finish_when_admin_already_exists(provisioned):
+    assert provisioned.post("/api/setup/finish", headers=H).status_code == 409
+    provisioned.created.append(("admin", "$argon2id$x"))
+    assert provisioned.get("/api/setup/admin", headers=H).json() == {"needed": False}
+    assert provisioned.post("/api/setup/admin", headers=H, json=ADMIN).status_code == 409
+    assert provisioned.post("/api/setup/finish", headers=H).status_code == 200
+    assert provisioned.get("/api/setup/status").json()["admin_created"] is True

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/home.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+    </div>
+    <div class="topbar-right">
+      <span class="user-chip" id="user-chip"></span>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page" id="home" hidden>
+    <section class="card hero">
+      <div class="hero-text">
+        <span class="badge">Instalação concluída</span>
+        <h1 id="welcome">Bem-vindo ao OpenMon</h1>
+        <p>O Servidor 1 está conectado ao banco PostgreSQL + TimescaleDB do Servidor 2 por TLS (verify-full),
+          com retenção de 5 anos e agregações contínuas. Os próximos passos são cadastrar os tenants e as
+          integrações a monitorar.</p>
+      </div>
+      <div class="hero-side">
+        <strong>Sessão segura</strong>
+        <span class="ok-text">Cookie HttpOnly · SameSite=Strict · CSRF</span>
+        <span class="muted small" id="session-exp"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Sua conta</h2>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section class="card">
+      <h2>Próximos passos</h2>
+      <ol class="steps">
+        <li>Cadastrar os tenants (clientes) e os usuários de cada um</li>
+        <li>Conectar o Active Directory/LDAP (opcional)</li>
+        <li>Adicionar integrações: VMware vCenter, Hyper-V (WinRM), Veeam e dispositivos SNMP v2c/v3</li>
+        <li>Configurar alertas e canais de notificação</li>
+      </ol>
+      <p class="muted small">Essas telas chegam nas próximas entregas.</p>
+    </section>
+  </main>
+</body>
+</html>

@@ -31,8 +31,17 @@ Depois, o banco da VM 2 é instalado **pela interface web**: abra
 da VM 2, a senha e o IP da VM 1. "Testar Conexão SSH" mostra a impressão digital
 da chave da VM 2 para você conferir e testa o login; "Fazer Deploy" instala
 PostgreSQL + TimescaleDB com o terminal ao vivo. Na VM 2 basta Debian 13 com SSH.
-O token deixa de valer quando o deploy termina com sucesso (para refazer:
-rode o instalador com `--new-setup-token`).
+
+Assim que o deploy termina, a mesma tela pede o **administrador global**
+(usuário + senha de 12+ caracteres, guardada como Argon2id). Ao criar, o
+assistente é encerrado, o token deixa de valer e o navegador vai para a
+**tela de login** (`https://IP_DA_VM1/login.html`); `https://IP_DA_VM1/`
+passa a levar sempre ao login ou à página inicial. Para refazer o deploy do
+banco depois disso, rode o instalador com `--new-setup-token`.
+
+> Instalou antes desta versão (banco provisionado, sem administrador)? Rode o
+> mesmo comando curl de novo: ele gera um novo token e o assistente abre direto
+> na criação do administrador.
 
 <details>
 <summary>Repositório privado</summary>
@@ -64,7 +73,8 @@ atualizar, rode o mesmo comando.
 | 2. Schema PostgreSQL + TimescaleDB (tenancy, cofre, ativos, hypertables, caggs, retenção) | ✅ [docs/02-banco-de-dados.md](docs/02-banco-de-dados.md) |
 | 3. Deploy remoto do banco via SSH | ✅ [docs/03-deploy-banco-ssh.md](docs/03-deploy-banco-ssh.md) |
 | 4. Assistente web do deploy do banco (token de instalação, terminal ao vivo) | ✅ |
-| 5. API completa: login local + AD, RBAC, CSRF, cofre | próximo |
+| 5a. Primeiro administrador, login local (Argon2id, sessão, CSRF, bloqueio), página inicial | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md) |
+| 5b. Login AD/LDAP, RBAC nas telas, tenants, cofre | próximo |
 | 6. Coletores vCenter, Hyper-V, Veeam e SNMP | — |
 | 7. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
 

@@ -8,7 +8,9 @@ padrão de outras plataformas na primeira execução). O token:
 * vai no cabeçalho ``X-Setup-Token`` (não em cookie, então não há CSRF);
 * é comparado em tempo constante; erros contam para o rate limit por IP e são
   registrados em ``auth.log`` para o Fail2ban;
-* é apagado quando o deploy do banco termina com sucesso, fechando o assistente.
+* continua válido depois do deploy, para a etapa seguinte: criar o primeiro
+  administrador global. Só então é apagado e ``setup.done`` é gravado; a partir
+  daí a interface leva direto para a tela de login.
 """
 from __future__ import annotations
 
@@ -24,7 +26,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from openmon import config
-from openmon.api import authlog
+from openmon.api import authlog, security
+from openmon.db import pool
 from openmon.deploy import provisioner
 from openmon.deploy.provisioner import DeployError, DeployRequest, deploy_async
 from openmon.deploy.ssh import SshError, SshTarget, fetch_host_key
@@ -66,8 +69,8 @@ def require_setup_token(request: Request, x_setup_token: str = Header(default=""
     ip = client_ip(request)
     expected = _read_token()
     if expected is None:
-        raise HTTPException(403, "O assistente de instalação está encerrado: o banco já foi provisionado. "
-                                 "Para refazer, rode o instalador com --new-setup-token.")
+        raise HTTPException(403, "O assistente de instalação está encerrado. Entre pela tela de login; "
+                                 "para refazer o deploy do banco, rode o instalador com --new-setup-token.")
     if _too_many_failures(ip):
         authlog.event("auth.rate_limited", ip, username="setup-token", source="setup")
         raise HTTPException(429, "Muitas tentativas inválidas. Aguarde 15 minutos.")
@@ -149,7 +152,6 @@ class DeployJob:
         self.result: dict[str, Any] | None = None
         self.started_at: float | None = None
         self.task: asyncio.Task | None = None
-        self.closed_token_hash: bytes | None = None
 
     def snapshot(self, since: int = 0) -> dict[str, Any]:
         since = max(0, min(since, len(self.events)))
@@ -174,11 +176,7 @@ class DeployJob:
         }
         self.status = "success" if result.success else "failed"
         if result.success:
-            # Fecha o assistente; quem acompanhava o deploy ainda lê o resultado final
-            token = _read_token()
-            if token:
-                self.closed_token_hash = hashlib.sha256(token.encode()).digest()
-            config.setup_token_file().unlink(missing_ok=True)
+            await pool.close_pool()  # próxima consulta usa a configuração recém-gravada
 
 
 job = DeployJob()
@@ -190,7 +188,7 @@ job = DeployJob()
 @router.get("/status")
 async def status() -> dict[str, Any]:
     return {"setup_open": _read_token() is not None, "db_provisioned": config.db_provisioned(),
-            "deploy_status": job.status}
+            "admin_created": config.admin_created(), "deploy_status": job.status}
 
 
 @router.post("/token/verify", dependencies=[Depends(require_setup_token)])
@@ -244,14 +242,128 @@ async def start_deploy(form: DeployForm, request: Request) -> dict[str, Any]:
     return {"status": "running"}
 
 
-def require_progress_access(request: Request, x_setup_token: str = Header(default="")) -> None:
-    """O andamento continua legível com o token que acabou de ser consumido pelo deploy."""
-    if _read_token() is None and job.closed_token_hash is not None and hmac.compare_digest(
-            hashlib.sha256(x_setup_token.encode()).digest(), job.closed_token_hash):
-        return
-    require_setup_token(request, x_setup_token)
-
-
-@router.get("/database/deploy", dependencies=[Depends(require_progress_access)])
+@router.get("/database/deploy", dependencies=[Depends(require_setup_token)])
 async def deploy_progress(since: int = 0) -> dict[str, Any]:
     return job.snapshot(since)
+
+
+# -----------------------------------------------------------------------------
+# Primeiro administrador (última etapa do assistente)
+# -----------------------------------------------------------------------------
+_ADMIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]{2,63}$")
+_ADMIN_LOCK = 0x4F4D_0001  # pg_advisory_xact_lock: dois navegadores não criam dois "primeiros" admins
+
+
+class AdminForm(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    display_name: str | None = Field(default=None, max_length=128)
+    email: str | None = Field(default=None, max_length=254)
+    password: SecretStr = Field(max_length=security.PASSWORD_MAX)
+    password_confirm: SecretStr = Field(max_length=security.PASSWORD_MAX)
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, v: str) -> str:
+        v = v.strip()
+        if not _ADMIN_RE.match(v):
+            raise ValueError("use 3 a 64 caracteres: letras, números, ponto, hífen, sublinhado ou @")
+        return v
+
+    @field_validator("display_name", "email")
+    @classmethod
+    def _optional(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        return v or None
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str | None) -> str | None:
+        if v is not None and not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
+            raise ValueError("e-mail inválido")
+        return v
+
+
+def _close_setup() -> None:
+    state = config.state_dir()
+    tmp = state / ".setup.done.tmp"
+    tmp.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) + "\n", encoding="utf-8")
+    tmp.replace(config.setup_done_file())
+    config.setup_token_file().unlink(missing_ok=True)
+
+
+def _require_db() -> None:
+    if job.status == "running":
+        raise HTTPException(409, "O deploy do banco ainda está em andamento.")
+    if not config.db_provisioned():
+        raise HTTPException(409, "Faça o deploy do banco de dados antes de criar o administrador.")
+
+
+async def users_exist() -> bool:
+    async with pool.system_transaction() as conn:
+        return bool(await conn.fetchval("SELECT EXISTS (SELECT 1 FROM users)"))
+
+
+async def create_first_admin(form: AdminForm, password_hash: str, ip: str | None, ua: str) -> int | None:
+    """Cria o administrador global; None se já existir algum usuário."""
+    async with pool.system_transaction() as conn:
+        await conn.execute("SELECT pg_advisory_xact_lock($1)", _ADMIN_LOCK)
+        if await conn.fetchval("SELECT EXISTS (SELECT 1 FROM users)"):
+            return None
+        user_id = await conn.fetchval(
+            """INSERT INTO users (username, display_name, email, auth_source, password_hash, role_id,
+                                  password_changed_at)
+               SELECT $1, $2, $3, 'local', $4, r.id, now() FROM roles r WHERE r.code = 'global_admin'
+               RETURNING id""",
+            form.username, form.display_name, form.email, password_hash)
+        await conn.execute(
+            """INSERT INTO audit_log (user_id, username, client_ip, user_agent, action, object_type, object_id, details)
+               VALUES ($1::bigint, $2, $3::inet, $4, 'setup.admin_create', 'user', ($1::bigint)::text, '{"role":"global_admin"}')""",
+            user_id, form.username, ip, ua)
+        return user_id
+
+
+@router.get("/admin", dependencies=[Depends(require_setup_token)])
+async def admin_needed() -> dict[str, bool]:
+    _require_db()
+    try:
+        return {"needed": not await users_exist()}
+    except pool.DatabaseUnavailable as exc:
+        raise HTTPException(503, f"Banco de dados indisponível: {exc}") from exc
+
+
+@router.post("/admin", dependencies=[Depends(require_setup_token)], status_code=201)
+async def create_admin(form: AdminForm, request: Request) -> dict[str, Any]:
+    _require_db()
+    password = form.password.get_secret_value()
+    if password != form.password_confirm.get_secret_value():
+        raise HTTPException(422, "As senhas não conferem.")
+    problem = security.password_problem(password, form.username)
+    if problem:
+        raise HTTPException(422, problem)
+    ip = client_ip(request)
+    password_hash = await asyncio.to_thread(security.hash_password, password)
+    try:
+        user_id = await create_first_admin(form, password_hash, security.inet_or_none(ip),
+                                           security.user_agent(request))
+    except pool.DatabaseUnavailable as exc:
+        raise HTTPException(503, f"Banco de dados indisponível: {exc}") from exc
+    if user_id is None:
+        raise HTTPException(409, "Já existe um administrador. Use \"Ir para o login\".")
+    _close_setup()
+    authlog.event("setup.admin_created", ip, username=form.username, source="setup")
+    return {"ok": True, "username": form.username, "redirect": "/login.html"}
+
+
+@router.post("/finish", dependencies=[Depends(require_setup_token)])
+async def finish_setup(request: Request) -> dict[str, Any]:
+    """Encerra o assistente quando o administrador já existe (ex.: deploy refeito com --new-setup-token)."""
+    _require_db()
+    try:
+        exists = await users_exist()
+    except pool.DatabaseUnavailable as exc:
+        raise HTTPException(503, f"Banco de dados indisponível: {exc}") from exc
+    if not exists:
+        raise HTTPException(409, "Crie o administrador antes de encerrar o assistente.")
+    _close_setup()
+    authlog.event("setup.finished", client_ip(request), source="setup")
+    return {"ok": True, "redirect": "/login.html"}

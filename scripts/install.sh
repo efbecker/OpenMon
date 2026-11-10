@@ -92,12 +92,12 @@ APT_OPTS=(-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-co
 CORE=(
     ca-certificates curl openssl sudo chrony nftables fail2ban logrotate zstd tar iproute2
     apache2 python3 python3-venv python3-paramiko python3-psycopg postgresql-client
-    python3-fastapi python3-uvicorn python3-pydantic
+    python3-fastapi python3-uvicorn python3-pydantic python3-asyncpg python3-argon2
 )
 # Usados pela API e pelos coletores: instalados se existirem no repositório
 APP=(
     python3-multipart python3-jinja2
-    python3-asyncpg python3-cryptography python3-argon2 python3-bcrypt python3-jwt python3-ldap3
+    python3-cryptography python3-bcrypt python3-jwt python3-ldap3
     python3-httpx python3-winrm python3-requests-ntlm python3-pyvmomi python3-systemd
     snmp unattended-upgrades
 )
@@ -229,7 +229,7 @@ install -m 0644 "$APP_DIR/packaging/apache2/openmon-security.conf" /etc/apache2/
 # Interface web (estáticos). __VERSION__ força o navegador a buscar os assets novos.
 find "$WEB_DIR" -mindepth 1 -delete
 cp -r "$SRC/frontend/public/." "$WEB_DIR/"
-sed -i "s/__VERSION__/${COMMIT:-$REF}/g" "$WEB_DIR/index.html"
+sed -i "s/__VERSION__/${COMMIT:-$REF}/g" "$WEB_DIR"/*.html
 chown -R root:root "$WEB_DIR"
 chmod -R u=rwX,go=rX "$WEB_DIR"
 a2enmod -q ssl headers proxy proxy_http proxy_wstunnel rewrite http2 >/dev/null
@@ -255,9 +255,11 @@ install -m 0644 "$APP_DIR/packaging/fail2ban/jail.d/openmon.conf" /etc/fail2ban/
 systemctl enable --quiet fail2ban
 systemctl restart fail2ban || warn "o Fail2ban não reiniciou; veja: journalctl -u fail2ban"
 
-# Token de instalação: libera o assistente web até o banco ser provisionado
+# Token de instalação: libera o assistente web (deploy do banco + primeiro
+# administrador) até a instalação terminar, marcada por $STATE_DIR/setup.done
 SETUP_TOKEN=""
-if [ "$NEW_SETUP_TOKEN" = "1" ] || [ ! -s "$CONF_DIR/database/database.conf" ]; then
+[ "$NEW_SETUP_TOKEN" = "1" ] && rm -f "$STATE_DIR/setup.done"
+if [ ! -e "$STATE_DIR/setup.done" ]; then
     if [ "$NEW_SETUP_TOKEN" = "1" ] || [ ! -s "$STATE_DIR/setup.token" ]; then
         openssl rand -hex 24 > "$STATE_DIR/setup.token.new"
         chown openmon:openmon "$STATE_DIR/setup.token.new"
@@ -321,15 +323,24 @@ echo -e "${C_G} OpenMon ${VERSION:-} instalado na VM 1${C_0}"
 echo -e "${C_G}==========================================================================${C_0}"
 echo -e " Web:        ${C_C}https://${FQDN}/${C_0}  (ou https://${PRIMARY_IP:-<ip>}/)"
 echo -e " Código:     $APP_DIR/app   Configuração: $CONF_DIR   Logs: $LOG_DIR"
-if [ -s "$CONF_DIR/database/database.conf" ] && [ -z "$SETUP_TOKEN" ]; then
+if [ -z "$SETUP_TOKEN" ]; then
     echo -e " Banco:      provisionado ($CONF_DIR/database/database.conf, TLS verify-full)"
+    echo -e " Login:      ${C_C}https://${PRIMARY_IP:-$FQDN}/login.html${C_0}"
+elif [ -s "$CONF_DIR/database/database.conf" ]; then
+    echo ""
+    echo -e " ${C_Y}Próximo passo: criar o administrador pela interface web${C_0}"
+    echo -e "   1. Abra ${C_C}https://${PRIMARY_IP:-$FQDN}/${C_0} (certificado autoassinado: aceite o aviso)"
+    echo -e "   2. Token de instalação: ${C_G}${SETUP_TOKEN}${C_0}"
+    echo -e "      (também em $STATE_DIR/setup.token; vale até o administrador ser criado)"
+    echo -e "   3. O banco já está provisionado: o assistente abre direto na criação do administrador."
 else
     echo ""
     echo -e " ${C_Y}Próximo passo: deploy do banco (VM 2) pela interface web${C_0}"
     echo -e "   1. Abra ${C_C}https://${PRIMARY_IP:-$FQDN}/${C_0} (certificado autoassinado: aceite o aviso)"
     echo -e "   2. Token de instalação: ${C_G}${SETUP_TOKEN}${C_0}"
-    echo -e "      (também em $STATE_DIR/setup.token; vale até o deploy terminar com sucesso)"
+    echo -e "      (também em $STATE_DIR/setup.token; vale até o administrador ser criado)"
     echo -e "   3. Na VM 2 basta Debian 13 com SSH e um usuário com sudo."
+    echo -e "   4. Depois do deploy, crie o administrador na mesma tela e entre pelo login."
 fi
 echo -e " Atualizar:  rode o mesmo comando curl de novo (configuração e dados são mantidos)."
 echo ""
