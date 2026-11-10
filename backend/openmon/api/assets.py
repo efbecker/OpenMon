@@ -48,10 +48,12 @@ async def list_assets(tenant_id: int | None = None, integration_id: int | None =
                            OR host(a.ip_address) LIKE $3 || '%')
                       AND ($4 OR a.deleted_at IS NULL)
                       AND ($6::bigint IS NULL OR a.integration_id = $6)
+                      AND NOT (a.attributes ? 'backup_job_id')
                     ORDER BY a.asset_type, lower(a.name) LIMIT $5""",
                 tenant_id, asset_type, (q or "").strip() or None, include_deleted, limit, integration_id)
             counts = await conn.fetch(
                 "SELECT asset_type, status, count(*) AS n FROM assets WHERE deleted_at IS NULL "
+                "AND NOT (attributes ? 'backup_job_id') "
                 "AND ($1::bigint IS NULL OR tenant_id = $1) GROUP BY 1, 2", tenant_id)
             latest = await _latest(conn, [r["id"] for r in rows])
             tenants = await conn.fetch("SELECT id, name, is_provider FROM tenants WHERE is_active "

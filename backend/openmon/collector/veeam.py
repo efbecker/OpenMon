@@ -214,7 +214,6 @@ async def poll(integ: Integration, w: Writer) -> str:
         if used is None and cap is not None and free is not None:
             used = cap - free
         w.metric(aid, tid, "storage.used.bytes", used * GB if used is not None else None)
-    await w.retire_missing(("backup_repository",))
 
     job_ids: dict[str, tuple[int, int]] = {}
     for j in jobs:
@@ -240,10 +239,20 @@ async def poll(integ: Integration, w: Writer) -> str:
             tenant, integ.id, j["id"], (j.get("name") or j["id"])[:250], j.get("type"), status != "disabled",
             (j.get("description") or "")[:500] or None, repo[0] if repo else None, result, _ts(j.get("lastRun")))
         job_ids[j["id"]] = (row["id"], row["tenant_id"])
+    # Cada job também vira um ativo "other" (escondido do Inventário) para os alertas terem um problema por job
+    jrows = await conn.fetch("SELECT id, external_id, name, tenant_id, last_result, repository_id FROM backup_jobs "
+                             "WHERE integration_id = $1 AND id = ANY($2::bigint[])", integ.id,
+                             [v[0] for v in job_ids.values()])
+    await w.assets_bulk([{"external_id": f"job:{r['external_id']}", "asset_type": "other", "name": r["name"],
+                          "tenant_id": r["tenant_id"], "parent_id": r["repository_id"] or sid,
+                          "status": "warning" if r["last_result"] == "failed" else "up", "vendor": "Veeam",
+                          "attributes": {"backup_job_id": r["id"]}} for r in jrows])
     if job_ids:
         await conn.execute("UPDATE backup_jobs SET deleted_at = now(), updated_at = now() WHERE integration_id = $1 "
                            "AND deleted_at IS NULL AND NOT (id = ANY($2::bigint[]))",
                            integ.id, [v[0] for v in job_ids.values()])
+
+    await w.retire_missing(("backup_repository", "other"))
 
     runs = []
     for s in sessions:

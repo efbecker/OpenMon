@@ -279,7 +279,12 @@ if has_module openmon.api.main; then
 else
     PENDING+=(openmon-api)
 fi
-if has_module openmon.scheduler; then systemctl enable --now --quiet openmon-scheduler.service; else PENDING+=(openmon-scheduler); fi
+if has_module openmon.scheduler; then
+    systemctl enable --quiet openmon-scheduler.service
+    systemctl restart openmon-scheduler.service
+else
+    PENDING+=(openmon-scheduler)
+fi
 if has_module openmon.collector; then
     # restart (não só --now): numa atualização os coletores já rodam e precisam carregar o código novo
     for c in vmware hyperv veeam snmp; do

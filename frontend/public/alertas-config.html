@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Configurar alertas</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/alertas-config.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/alertas.html" class="active" aria-current="page">Alertas</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Alertas configurados <span class="count" id="count"></span></h2>
+          <p class="muted small">O agendador avalia cada alerta a cada 30 s. Um problema por alerta e ativo; ele fecha
+            sozinho quando o valor volta (com a recuperação, se definida, para não ficar abrindo e fechando). Os canais
+            marcados recebem a abertura, o reconhecimento e o fechamento.</p>
+        </div>
+        <div class="head-actions">
+          <a class="btn ghost" href="/alertas.html">Ver problemas</a>
+          <button type="button" class="btn ghost" id="btn-recommended">Adicionar recomendados</button>
+          <button type="button" class="btn primary" id="btn-new">Novo alerta</button>
+        </div>
+      </div>
+      <p class="error-text" id="list-error" hidden></p>
+      <p class="ok-text small" id="list-ok" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Alerta</th><th>Condição</th><th>Vale para</th><th>Severidade</th><th>Canais</th>
+            <th>Em aberto</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum alerta ainda. "Adicionar recomendados" cria um conjunto inicial
+        (fora do ar, CPU, memória, armazenamento, links, backup e integrações).</p>
+    </section>
+
+    <section class="card" id="t-editor" hidden>
+      <form id="t-form" novalidate autocomplete="off">
+        <div class="section-head">
+          <h2 id="t-title">Novo alerta</h2>
+          <label class="check"><input id="t-enabled" type="checkbox" checked><span>Habilitado</span></label>
+        </div>
+        <div class="grid two mt">
+          <label class="field">
+            <span class="label">Nome</span>
+            <input id="t-name" maxlength="120" placeholder="CPU acima de 90%">
+          </label>
+          <label class="field">
+            <span class="label">Severidade</span>
+            <select id="t-severity">
+              <option value="disaster">Desastre</option>
+              <option value="high">Alta</option>
+              <option value="average" selected>Média</option>
+              <option value="warning">Atenção</option>
+              <option value="info">Informação</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="label">Tipo</span>
+            <select id="t-source">
+              <option value="metric">Métrica de um ativo</option>
+              <option value="interface">Uso de interface (% da banda)</option>
+              <option value="availability">Fora do ar</option>
+              <option value="backup">Backup com falha ou fora do SLA</option>
+              <option value="integration">Integração com erro de coleta</option>
+            </select>
+          </label>
+          <label class="field" data-src="metric">
+            <span class="label">Métrica</span>
+            <select id="t-metric"></select>
+          </label>
+          <div class="grid inner" data-src="metric interface">
+            <label class="field">
+              <span class="label">Valor</span>
+              <select id="t-expr">
+                <option value="avg">Média na janela</option>
+                <option value="max">Máximo na janela</option>
+                <option value="min">Mínimo na janela</option>
+                <option value="last">Última leitura</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">Janela (min)</span>
+              <input id="t-window" type="number" min="1" max="1440" value="5">
+            </label>
+          </div>
+          <div class="grid inner3" data-src="metric interface">
+            <label class="field">
+              <span class="label">Condição</span>
+              <select id="t-op">
+                <option value=">">maior que</option>
+                <option value=">=">maior ou igual</option>
+                <option value="<">menor que</option>
+                <option value="<=">menor ou igual</option>
+                <option value="=">igual a</option>
+                <option value="<>">diferente de</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">Limite <span id="t-unit"></span></span>
+              <input id="t-threshold" type="number" step="any" value="90">
+            </label>
+            <label class="field">
+              <span class="label">Recupera em</span>
+              <input id="t-recovery" type="number" step="any" placeholder="opcional">
+            </label>
+          </div>
+          <label class="field" data-src="availability">
+            <span class="label">Fora há pelo menos (min)</span>
+            <input id="t-window-av" type="number" min="1" max="1440" value="2">
+          </label>
+          <label class="field" data-src="backup">
+            <span class="label">Horas sem backup bom (0 = SLA do tenant)</span>
+            <input id="t-hours" type="number" min="0" max="8760" value="0">
+          </label>
+          <label class="field">
+            <span class="label">Tenant</span>
+            <select id="t-tenant"></select>
+          </label>
+          <label class="field" data-src="metric interface availability">
+            <span class="label">Tipo de ativo</span>
+            <select id="t-type"></select>
+          </label>
+          <p class="muted small full" id="t-hint"></p>
+          <div class="field full">
+            <span class="label">Avisar nos canais</span>
+            <div class="checklist" id="t-channels"></div>
+            <span class="muted small" id="t-no-channels" hidden>Nenhum canal ainda: o problema aparece só na tela
+              Alertas. Cadastre os canais abaixo.</span>
+          </div>
+        </div>
+        <p class="error-text" id="t-error" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn danger" id="t-delete" hidden>Excluir</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="t-cancel">Cancelar</button>
+          <button type="submit" class="btn deploy" id="t-save">Salvar</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Canais de notificação <span class="count" id="c-count"></span></h2>
+          <p class="muted small">E-mail só com TLS ou STARTTLS, Telegram por bot e webhook HTTPS com assinatura
+            HMAC-SHA256. Senhas e tokens ficam no cofre (AES-256-GCM). Canal de um cliente só recebe os problemas dos
+            ativos daquele cliente.</p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn primary" id="c-new">Novo canal</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="channels">
+          <thead><tr><th>Canal</th><th>Tipo</th><th>Destino</th><th>Recebe</th><th>Alertas</th><th>Último teste</th>
+            <th>Falhas (7 dias)</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="c-empty" hidden>Nenhum canal cadastrado.</p>
+    </section>
+
+    <section class="card" id="c-editor" hidden>
+      <form id="c-form" novalidate autocomplete="off">
+        <div class="section-head">
+          <h2 id="c-title">Novo canal</h2>
+          <label class="check"><input id="c-enabled" type="checkbox" checked><span>Habilitado</span></label>
+        </div>
+        <div class="grid two mt">
+          <label class="field">
+            <span class="label">Nome</span>
+            <input id="c-name" maxlength="120" placeholder="E-mail do NOC">
+          </label>
+          <label class="field">
+            <span class="label">Tipo</span>
+            <select id="c-kind">
+              <option value="email">E-mail (SMTP)</option>
+              <option value="telegram">Telegram</option>
+              <option value="webhook">Webhook</option>
+            </select>
+          </label>
+          <label class="field full">
+            <span class="label">Recebe problemas de</span>
+            <select id="c-tenant"></select>
+          </label>
+
+          <label class="field" data-kind="email">
+            <span class="label">Servidor SMTP</span>
+            <input id="c-host" maxlength="253" spellcheck="false" placeholder="smtp.office365.com">
+          </label>
+          <div class="grid inner" data-kind="email">
+            <label class="field">
+              <span class="label">Segurança</span>
+              <select id="c-security">
+                <option value="starttls">STARTTLS (587)</option>
+                <option value="tls">TLS direto (465)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">Porta</span>
+              <input id="c-port" type="number" min="1" max="65535" value="587">
+            </label>
+          </div>
+          <label class="field" data-kind="email">
+            <span class="label">Remetente</span>
+            <input id="c-from" maxlength="254" spellcheck="false" placeholder="alertas@empresa.com.br">
+          </label>
+          <label class="field" data-kind="email">
+            <span class="label">Destinatários (um por linha)</span>
+            <textarea id="c-to" rows="2" spellcheck="false" placeholder="noc@empresa.com.br"></textarea>
+          </label>
+          <label class="field" data-kind="email">
+            <span class="label">Usuário SMTP (em branco = sem autenticação)</span>
+            <input id="c-user" maxlength="256" spellcheck="false">
+          </label>
+          <label class="field" data-kind="email">
+            <span class="label">Senha SMTP</span>
+            <input id="c-pw" type="password" maxlength="1024" autocomplete="new-password">
+            <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
+          </label>
+
+          <label class="field" data-kind="telegram">
+            <span class="label">Token do bot (do @BotFather)</span>
+            <input id="c-token" type="password" maxlength="200" autocomplete="new-password" placeholder="123456789:AA…">
+            <span class="muted small secret-hint" hidden>Guardado no cofre. Deixe em branco para manter.</span>
+          </label>
+          <label class="field" data-kind="telegram">
+            <span class="label">Chat ID</span>
+            <input id="c-chat" maxlength="70" spellcheck="false" placeholder="-1001234567890">
+            <span class="muted small">Grupo: adicione o bot e use o ID do grupo (começa com -100). Canal: @nome.</span>
+          </label>
+
+          <label class="field full" data-kind="webhook">
+            <span class="label">URL (https)</span>
+            <input id="c-url" maxlength="2000" spellcheck="false" placeholder="https://hooks.empresa.com.br/openmon">
+          </label>
+          <label class="field" data-kind="webhook">
+            <span class="label">Método</span>
+            <select id="c-method"><option>POST</option><option>PUT</option></select>
+          </label>
+          <label class="field" data-kind="webhook">
+            <span class="label">Segredo HMAC (opcional)</span>
+            <input id="c-secret" type="password" maxlength="1024" autocomplete="new-password">
+            <span class="muted small secret-hint" hidden>Guardado no cofre. Deixe em branco para manter.</span>
+          </label>
+          <label class="field full" data-kind="webhook">
+            <span class="label">Cabeçalhos extras (um por linha, Nome: valor)</span>
+            <textarea id="c-headers" rows="2" spellcheck="false" placeholder="X-Origem: openmon"></textarea>
+            <span class="muted small">Corpo JSON com evento, severidade, mensagem, tenant e ativo. Com segredo, vai
+              <code>X-OpenMon-Signature: sha256=HMAC(segredo, timestamp + "." + corpo)</code> e
+              <code>X-OpenMon-Timestamp</code>.</span>
+          </label>
+        </div>
+        <div class="test-result" id="c-test-result" hidden></div>
+        <p class="error-text" id="c-error" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn danger" id="c-delete" hidden>Excluir</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="c-test">Enviar teste</button>
+          <button type="button" class="btn ghost" id="c-cancel">Cancelar</button>
+          <button type="submit" class="btn deploy" id="c-save">Salvar</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Últimos envios</h2>
+      <div class="table-wrap">
+        <table class="table" id="deliveries">
+          <thead><tr><th>Quando</th><th>Canal</th><th>Evento</th><th>Problema</th><th>Situação</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="d-empty" hidden>Nada enviado ainda.</p>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Somente o Administrador global e o Operador configuram alertas.</p>
+      <a class="btn ghost" href="/alertas.html">Ver os problemas</a>
+    </section>
+  </main>
+</body>
+</html>

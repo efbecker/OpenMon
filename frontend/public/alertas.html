@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Alertas</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/alertas.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/alertas.html" class="active" aria-current="page">Alertas</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Alertas <span class="count" id="count"></span></h2>
+          <p class="muted small" id="intro">Problemas detectados pelos alertas configurados. Reconhecer avisa os canais
+            que alguém está cuidando; o problema fecha sozinho quando o valor volta ao normal.</p>
+        </div>
+        <div class="head-actions">
+          <select class="filter" id="filter-status" aria-label="Situação">
+            <option value="open">Em aberto</option>
+            <option value="resolved">Resolvidos</option>
+            <option value="all">Todos</option>
+          </select>
+          <select class="filter" id="filter-tenant" aria-label="Filtrar por tenant"><option value="">Todos os tenants</option></select>
+          <a class="btn primary" id="btn-config" href="/alertas-config.html" hidden>Configurar alertas</a>
+        </div>
+      </div>
+      <div class="sev-bar" id="sev-bar"></div>
+      <p class="error-text" id="list-error" hidden></p>
+      <p class="ok-text small" id="list-ok" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Severidade</th><th>Problema</th><th>Tenant</th><th>Início</th><th>Duração</th>
+            <th>Reconhecido</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum problema em aberto. 🎉</p>
+    </section>
+  </main>
+</body>
+</html>
