@@ -18,6 +18,7 @@
         <a href="/home.html">Início</a>
         <a href="/tenants.html" data-nav="global">Tenants</a>
         <a href="/usuarios.html" data-nav="admin" class="active" aria-current="page">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
         <a href="/seguranca.html" data-nav="admin">Segurança</a>
       </nav>
     </div>
@@ -83,6 +84,8 @@
           <span class="label">E-mail</span>
           <input id="f-email" type="email" maxlength="254" placeholder="joao@cliente.com.br">
         </label>
+        <p class="note full" id="ldap-note" hidden>Usuário do Active Directory: perfil e tenants são atualizados pelos
+          grupos do AD a cada login. Aqui vale mudar o nome exibido ou desativar o acesso.</p>
         <div class="field full" id="tenants-field">
           <span class="label">Tenants que este usuário vê</span>
           <input id="f-tenant-filter" class="filter" placeholder="filtrar tenants" spellcheck="false">

@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from openmon import ldapauth, vault
 from openmon.api import authlog, security
 from openmon.db import pool
 
@@ -123,12 +124,13 @@ class PgAuthStore:
                     WHERE lower(u.username) = lower($1)""", username)
         return dict(row) if row else None
 
-    async def record_attempt(self, username: str, ip: str | None, success: bool, reason: str | None) -> None:
+    async def record_attempt(self, username: str, ip: str | None, success: bool, reason: str | None,
+                             source: str = "local") -> None:
         async with pool.system_transaction() as conn:
             await conn.execute(
                 "INSERT INTO login_attempts (username, client_ip, success, reason, auth_source) "
-                "VALUES ($1, coalesce($2::inet, '0.0.0.0'::inet), $3, $4, 'local')",
-                username[:128], ip, success, reason)
+                "VALUES ($1, coalesce($2::inet, '0.0.0.0'::inet), $3, $4, $5)",
+                username[:128], ip, success, reason, source)
 
     async def register_failure(self, user_id: int, lockout: dict[str, int]) -> bool:
         """Incrementa o contador; devolve True se a conta acabou de ser bloqueada."""
@@ -147,6 +149,7 @@ class PgAuthStore:
 
     async def open_session(self, user: dict[str, Any], ip: str | None, ua: str, token_hash: bytes,
                            csrf_hash: bytes, absolute_hours: int, new_hash: str | None) -> datetime:
+        source = "ldap" if user.get("auth_source") == "ldap" else "local"
         async with pool.system_transaction() as conn:
             await conn.execute(
                 """UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = now(),
@@ -156,13 +159,15 @@ class PgAuthStore:
             expires = await conn.fetchval(
                 """INSERT INTO user_sessions (token_hash, user_id, csrf_token_hash, auth_source,
                                               expires_at, client_ip, user_agent)
-                   VALUES ($1, $2, $3, 'local', now() + make_interval(hours => $4), $5::inet, $6)
+                   VALUES ($1, $2, $3, $7, now() + make_interval(hours => $4), $5::inet, $6)
                    RETURNING expires_at""",
-                token_hash, user["id"], csrf_hash, absolute_hours, ip, ua)
+                token_hash, user["id"], csrf_hash, absolute_hours, ip, ua, source)
             await conn.execute(
-                """INSERT INTO audit_log (user_id, username, client_ip, user_agent, action, object_type, object_id)
-                   VALUES ($1::bigint, $2, $3::inet, $4, 'auth.login', 'user', ($1::bigint)::text)""",
-                user["id"], user["username"], ip, ua)
+                """INSERT INTO audit_log (user_id, username, client_ip, user_agent, action, object_type, object_id,
+                                         details)
+                   VALUES ($1::bigint, $2, $3::inet, $4, 'auth.login', 'user', ($1::bigint)::text,
+                           jsonb_build_object('source', $5::text))""",
+                user["id"], user["username"], ip, ua, source)
         return expires
 
     async def load_session(self, token_hash: bytes, idle_minutes: int) -> dict[str, Any] | None:
@@ -185,6 +190,72 @@ class PgAuthStore:
                                  WHERE rp.role_id = u.role_id) AS permissions""",
                 token_hash, idle_minutes)
         return dict(row) if row else None
+
+    async def ldap_directories(self) -> list[dict[str, Any]]:
+        """Diretórios habilitados, com a senha da conta de serviço decifrada e os mapeamentos de grupo."""
+        async with pool.system_transaction() as conn:
+            dirs = await conn.fetch(
+                """SELECT id, name, urls, security, base_dn, bind_credential_id::text AS cred_id, user_filter,
+                          group_attribute, ca_cert_pem, timeout_seconds
+                     FROM ldap_directories WHERE is_enabled ORDER BY id""")
+            out = []
+            for d in dirs:
+                bind_dn, password = (None, "")
+                if d["cred_id"]:
+                    bind_dn, password = await vault.load(conn, d["cred_id"])
+                maps = await conn.fetch(
+                    """SELECT m.group_dn, m.tenant_id, m.priority, r.code AS role, r.scope,
+                              coalesce(t.is_active, true) AS tenant_active
+                         FROM ldap_group_mappings m JOIN roles r ON r.id = m.role_id
+                         LEFT JOIN tenants t ON t.id = m.tenant_id
+                        WHERE m.directory_id = $1""", d["id"])
+                out.append({**dict(d), "bind_dn": bind_dn or "", "bind_password": password,
+                            "mappings": [dict(m) for m in maps]})
+        return out
+
+    async def upsert_ldap_user(self, directory_id: int, lu: Any, role: str,
+                               tenant_ids: list[int]) -> dict[str, Any] | None:
+        """Cria/atualiza o usuário do AD no primeiro login e a cada login (perfil e tenants seguem os grupos).
+
+        None se já existir uma conta local com o mesmo nome (a conta local tem precedência).
+        """
+        async with pool.system_transaction() as conn:
+            row = await conn.fetchrow(
+                """SELECT id, auth_source FROM users
+                    WHERE (ldap_directory_id = $1 AND lower(external_dn) = lower($2)) OR lower(username) = lower($3)
+                    ORDER BY (ldap_directory_id = $1 AND lower(external_dn) = lower($2)) DESC NULLS LAST LIMIT 1""",
+                directory_id, lu.dn, lu.username)
+            if row is not None and row["auth_source"] != "ldap":
+                return None
+            if row is None:
+                uid = await conn.fetchval(
+                    """INSERT INTO users (username, display_name, email, auth_source, ldap_directory_id, external_dn,
+                                          role_id)
+                       SELECT $1, $2, $3, 'ldap', $4, $5, r.id FROM roles r WHERE r.code = $6 RETURNING id""",
+                    lu.username, lu.display_name, lu.email, directory_id, lu.dn, role)
+                await conn.execute(
+                    """INSERT INTO audit_log (user_id, username, action, object_type, object_id, details)
+                       VALUES ($1::bigint, $2, 'user.ldap_provision', 'user', ($1::bigint)::text,
+                               jsonb_build_object('role', $3::text, 'dn', $4::text))""",
+                    uid, lu.username, role, lu.dn)
+            else:
+                uid = row["id"]
+                await conn.execute(
+                    """UPDATE users u SET display_name = $2, email = $3, ldap_directory_id = $4, external_dn = $5,
+                              role_id = r.id, updated_at = now()
+                         FROM roles r WHERE u.id = $1 AND r.code = $6""",
+                    uid, lu.display_name, lu.email, directory_id, lu.dn, role)
+            await conn.execute("DELETE FROM user_tenants WHERE user_id = $1 AND NOT (tenant_id = ANY($2::bigint[]))",
+                               uid, tenant_ids)
+            if tenant_ids:
+                await conn.execute("INSERT INTO user_tenants (user_id, tenant_id) SELECT $1, unnest($2::bigint[]) "
+                                   "ON CONFLICT DO NOTHING", uid, tenant_ids)
+            found = await conn.fetchrow(
+                """SELECT u.id, u.username, u.display_name, u.email, u.auth_source, u.password_hash, u.is_active,
+                          u.locked_until, u.must_change_password, u.last_login_at,
+                          r.code AS role, r.name AS role_name, r.scope
+                     FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1""", uid)
+        return dict(found)
 
     async def password_hash(self, user_id: int) -> str | None:
         async with pool.system_transaction() as conn:
@@ -315,43 +386,99 @@ async def login(form: LoginForm, request: Request, response: Response) -> dict[s
         locked = by_user >= lockout["max_failures"] or bool(
             user and user["locked_until"] and user["locked_until"] > datetime.now(timezone.utc))
 
-        ok, new_hash = False, None
+        ok, new_hash, source, ldap_reason = False, None, "local", None
         no_tenant = bool(user and user.get("scope") == "tenant" and not user.get("has_active_tenant", True))
-        if user and user["auth_source"] == "local" and user["is_active"] and not locked and not no_tenant:
-            ok, new_hash = await asyncio.to_thread(security.verify_password, user["password_hash"], form.password)
+        if user and user["auth_source"] == "local":
+            if user["is_active"] and not locked and not no_tenant:
+                ok, new_hash = await asyncio.to_thread(security.verify_password, user["password_hash"],
+                                                       form.password)
+            else:
+                await asyncio.to_thread(security.verify_password, None, form.password)  # mesmo custo
         else:
-            await asyncio.to_thread(security.verify_password, None, form.password)  # mesmo custo
+            # Sem conta local com esse nome: Active Directory/LDAP, se configurado
+            directories = []
+            if not locked and (user is None or user["is_active"]):
+                try:
+                    directories = await store.ldap_directories()
+                except vault.VaultError as exc:
+                    _ldap_down(ip_text, username, str(exc))
+            if directories:
+                source = "ldap"
+                ldap_user, ldap_reason = await _ldap_login(directories, username, form.password, ip_text)
+                if ldap_user is not None:
+                    ok, user = True, ldap_user
+            else:
+                await asyncio.to_thread(security.verify_password, None, form.password)  # mesmo custo
 
         if not ok:
-            reason = ("locked" if locked else "unknown_user" if not user else
+            reason = ("locked" if locked else ldap_reason if ldap_reason else
+                      "unknown_user" if not user else
                       "inactive" if not user["is_active"] else
                       "ldap_not_configured" if user["auth_source"] != "local" else
                       "no_active_tenant" if no_tenant else "bad_password")
-            await store.record_attempt(username, ip, False, reason)
+            await store.record_attempt(username, ip, False, reason, source)
             just_locked = by_user + 1 >= lockout["max_failures"]
             if user and reason == "bad_password":
                 just_locked = await store.register_failure(user["id"], lockout) or just_locked
             authlog.event("auth.locked" if (locked or just_locked) else "auth.failure", ip_text,
-                          username=username, source="local", reason=reason)
+                          username=username, source=source, reason=reason)
             if locked:
                 raise HTTPException(429, LOCKED_FAIL)
+            if reason == "no_group":
+                raise HTTPException(403, "Usuário do Active Directory sem grupo com acesso ao OpenMon. "
+                                         "Peça ao administrador para incluir você em um grupo mapeado.")
             raise HTTPException(401, GENERIC_FAIL)
 
         token = security.new_session_token()
         csrf = security.csrf_for(token)
         expires = await store.open_session(user, ip, ua, security.sha256(token), security.sha256(csrf),
                                            settings["auth.session"]["absolute_hours"], new_hash)
-        await store.record_attempt(username, ip, True, None)
+        await store.record_attempt(username, ip, True, None, source)
     except pool.DatabaseUnavailable as exc:
         raise _db_error(exc) from exc
 
-    authlog.event("auth.success", ip_text, username=user["username"], source="local")
+    authlog.event("auth.success", ip_text, username=user["username"], source=source)
     max_age = max(60, int((expires - datetime.now(timezone.utc)).total_seconds())) \
         if isinstance(expires, datetime) else settings["auth.session"]["absolute_hours"] * 3600
     response.set_cookie(COOKIE, token, max_age=max_age, path="/", secure=True, httponly=True, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
     redirect = "/senha.html" if user.get("must_change_password") else "/home.html"
     return {"user": _public_user(user), "csrf_token": csrf, "redirect": redirect}
+
+
+def _ldap_down(ip_text: str, username: str, detail: str) -> None:
+    """AD fora do ar ou mal configurado: não conta como tentativa errada (não bloqueia ninguém)."""
+    authlog.event("auth.ldap_error", ip_text, username=username, source="ldap", detail=detail[:300])
+    raise HTTPException(503, "Não foi possível consultar o Active Directory agora. Tente de novo em instantes "
+                             "ou avise o administrador.")
+
+
+async def _ldap_login(directories: list[dict[str, Any]], username: str, password: str,
+                      ip_text: str) -> tuple[dict[str, Any] | None, str | None]:
+    """(usuário provisionado, None) ou (None, motivo da recusa)."""
+    for d in directories:
+        cfg = ldapauth.Directory(
+            urls=list(d["urls"]), security=d["security"], base_dn=d["base_dn"], bind_dn=d["bind_dn"],
+            bind_password=d["bind_password"], user_filter=d["user_filter"], group_attribute=d["group_attribute"] or "",
+            ca_cert_pem=d["ca_cert_pem"], timeout=int(d["timeout_seconds"] or 5))
+        try:
+            lu = await asyncio.to_thread(ldapauth.authenticate, cfg, username, password)
+        except ldapauth.LdapAuthFailed as exc:
+            if exc.reason == "unknown_user":
+                continue  # pode estar no próximo diretório
+            return None, "bad_password"
+        except ldapauth.LdapError as exc:
+            _ldap_down(ip_text, username, f"{d['name']}: {exc}")
+        access = ldapauth.resolve_access(d["mappings"], lu.groups)
+        if access is None:
+            return None, "no_group"
+        user = await store.upsert_ldap_user(d["id"], lu, access[0], access[1])
+        if user is None:
+            return None, "local_user_exists"
+        if not user["is_active"]:
+            return None, "inactive"
+        return user, None
+    return None, "unknown_user"
 
 
 @router.get("/me")

@@ -108,6 +108,7 @@
     $("f-must-change").checked = true;
     $("f-active").checked = u ? u.is_active : true;
     $("btn-delete").hidden = !u || u.id === you;
+    $("ldap-note").hidden = !(u && u.auth_source === "ldap");
     syncRole();
     showError("form-error", "");
     $("dlg").showModal();

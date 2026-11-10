@@ -76,7 +76,7 @@ atualizar, rode o mesmo comando.
 | 5a. Primeiro administrador, login local (Argon2id, sessão, CSRF, bloqueio), página inicial | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md) |
 | 5b. Tela Segurança: acessos, IPs bloqueados, bloquear/desbloquear (Fail2ban) | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md#tela-segurança-fail2ban-só-na-vm-1) |
 | 5c. Tenants e usuários por tenant (RBAC, RLS, senha provisória, auditoria) | ✅ [docs/05-tenants-e-usuarios.md](docs/05-tenants-e-usuarios.md) |
-| 5d. Login AD/LDAP (opcional) | próximo |
+| 5d. Login AD/LDAP opcional (LDAPS/StartTLS, grupos → perfil + tenant, cofre AES-256-GCM) | ✅ [docs/06-active-directory.md](docs/06-active-directory.md) |
 | 6. Coletores vCenter, Hyper-V, Veeam e SNMP | — |
 | 7. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
 

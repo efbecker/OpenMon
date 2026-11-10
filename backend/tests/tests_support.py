@@ -30,7 +30,10 @@ class FakeStore:
         u = self.users.get(username.lower())
         return dict(u) if u else None
 
-    async def record_attempt(self, username, ip, success, reason):
+    async def ldap_directories(self):
+        return []
+
+    async def record_attempt(self, username, ip, success, reason, source="local"):
         self.attempts.append((username, ip, success, reason))
 
     async def register_failure(self, user_id, lockout):

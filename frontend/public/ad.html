@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Active Directory</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/ad.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin" class="active" aria-current="page">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Active Directory / LDAP <span class="count" id="count"></span></h2>
+          <p class="muted small">Opcional. Com um diretório configurado, quem não tem conta local entra com o usuário e a
+            senha do AD. O perfil e os tenants vêm dos grupos do AD (mapeamentos abaixo): vale o perfil mais alto entre os
+            grupos do usuário e, para Cliente, os tenants de todos os grupos se somam. Quem não está em nenhum grupo
+            mapeado não entra. Só LDAPS ou StartTLS, com o certificado do servidor validado. A senha da conta de serviço
+            fica no cofre (AES-256-GCM).</p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn primary" id="btn-new">Novo diretório</button>
+        </div>
+      </div>
+      <p class="error-text" id="list-error" hidden></p>
+      <p class="ok-text small" id="list-ok" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Nome</th><th>Servidores</th><th>Segurança</th><th>Base DN</th><th>Grupos mapeados</th>
+            <th>Usuários do AD</th><th>Situação</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum diretório configurado: só contas locais entram.</p>
+    </section>
+
+    <section class="card" id="editor" hidden>
+      <form id="form" novalidate autocomplete="off">
+        <div class="section-head">
+          <h2 id="form-title">Novo diretório</h2>
+          <label class="check"><input id="f-enabled" type="checkbox" checked><span>Habilitado</span></label>
+        </div>
+        <div class="grid two mt">
+          <label class="field">
+            <span class="label">Nome</span>
+            <input id="f-name" maxlength="120" placeholder="AD corporativo">
+          </label>
+          <label class="field">
+            <span class="label">Segurança</span>
+            <select id="f-security">
+              <option value="ldaps">LDAPS (porta 636)</option>
+              <option value="starttls">StartTLS (porta 389)</option>
+            </select>
+          </label>
+          <label class="field full">
+            <span class="label">Servidores (um por linha, em ordem de preferência)</span>
+            <textarea id="f-urls" rows="2" spellcheck="false" placeholder="ldaps://dc1.empresa.local&#10;ldaps://dc2.empresa.local"></textarea>
+            <span class="muted small">Use o nome DNS que está no certificado do DC (não o IP).</span>
+          </label>
+          <label class="field full">
+            <span class="label">Base DN</span>
+            <input id="f-base" maxlength="1000" spellcheck="false" placeholder="DC=empresa,DC=local">
+          </label>
+          <label class="field">
+            <span class="label">Conta de serviço (DN ou usuário@domínio)</span>
+            <input id="f-bind-dn" maxlength="1000" spellcheck="false" placeholder="svc-openmon@empresa.local">
+          </label>
+          <label class="field">
+            <span class="label">Senha da conta de serviço</span>
+            <input id="f-bind-pw" type="password" maxlength="1024" autocomplete="new-password">
+            <span class="muted small" id="pw-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
+          </label>
+          <details class="advanced full">
+            <summary>Avançado: filtro, atributo de grupos, CA e tempo limite</summary>
+            <div class="grid two">
+              <label class="field full">
+                <span class="label">Filtro de usuário</span>
+                <input id="f-filter" maxlength="1000" spellcheck="false">
+                <span class="muted small">{username} é substituído (escapado) pelo que a pessoa digitar no login.</span>
+              </label>
+              <label class="field">
+                <span class="label">Atributo de grupos</span>
+                <input id="f-group-attr" maxlength="100" spellcheck="false" placeholder="memberOf">
+              </label>
+              <label class="field">
+                <span class="label">Tempo limite (s)</span>
+                <input id="f-timeout" type="number" min="1" max="60">
+              </label>
+              <label class="field full">
+                <span class="label">Certificado da CA (PEM, opcional)</span>
+                <textarea id="f-ca" rows="4" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                <span class="muted small">Necessário quando o certificado do DC é emitido pela CA interna da empresa.
+                  Em branco, valem as CAs do sistema.</span>
+              </label>
+            </div>
+          </details>
+        </div>
+
+        <h3 class="subhead">Grupos do AD com acesso</h3>
+        <p class="muted small">Cole o DN do grupo (ex.: CN=OpenMon-Clientes-ACME,OU=Grupos,DC=empresa,DC=local). O botão
+          Testar abaixo lista os grupos de um usuário de verdade.</p>
+        <div class="table-wrap">
+          <table class="table" id="maps">
+            <thead><tr><th>DN do grupo</th><th>Perfil</th><th>Tenant</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <button type="button" class="btn ghost mt" id="btn-add-map">Adicionar grupo</button>
+
+        <h3 class="subhead">Testar</h3>
+        <div class="grid two">
+          <label class="field">
+            <span class="label">Usuário de teste (opcional)</span>
+            <input id="t-user" maxlength="256" spellcheck="false" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="label">Senha do usuário de teste (opcional)</span>
+            <input id="t-pw" type="password" maxlength="1024" autocomplete="new-password">
+          </label>
+        </div>
+        <div class="test-result" id="test-result" hidden></div>
+
+        <p class="error-text" id="form-error" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn danger" id="btn-delete" hidden>Excluir</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="btn-test">Testar conexão</button>
+          <button type="button" class="btn ghost" id="btn-cancel">Cancelar</button>
+          <button type="submit" class="btn deploy" id="btn-save">Salvar</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Somente o Administrador Global configura o Active Directory.</p>
+      <a class="btn ghost" href="/home.html">Voltar ao início</a>
+    </section>
+  </main>
+</body>
+</html>

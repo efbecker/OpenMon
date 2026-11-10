@@ -229,3 +229,15 @@ select.filter { width: auto; min-width: 180px; }
   .brand { flex: 1; min-width: 0; flex-wrap: wrap; }
   .nav { flex-basis: 100%; margin: 8px 0 0; overflow-x: auto; }
 }
+
+/* Active Directory */
+.subhead { margin: 24px 0 6px; font-size: 15px; }
+.wide-cell { width: 55%; }
+.table td input, .table td select { padding: 8px 10px; font-size: 13px; }
+.table td select:disabled { opacity: 0.4; }
+.test-result { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border-2); border-radius: 10px; background: var(--panel-2); }
+.test-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.test-steps .muted { font-weight: 400; word-break: break-word; }
+.group-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.group-list code { word-break: break-all; }
+details.advanced.full { grid-column: 1 / -1; margin-top: 0; }

@@ -67,6 +67,9 @@ def reset_data() -> None:
         c.execute("SET search_path = openmon, public")
         c.execute("TRUNCATE user_sessions, user_tenants, login_attempts, assets, integrations CASCADE")
         c.execute("DELETE FROM audit_log")
+        c.execute("DELETE FROM ldap_directories")
+        c.execute("DELETE FROM credentials")
+        c.execute("DELETE FROM vault_keys")
         c.execute("DELETE FROM users")
         c.execute("DELETE FROM tenants WHERE NOT is_provider")
 
