@@ -72,8 +72,15 @@
     <form id="form" method="dialog" novalidate autocomplete="off">
       <h2 id="dlg-title">Novo usuário</h2>
       <div class="grid two">
+        <label class="field full" id="source-field" hidden>
+          <span class="label">Origem da senha</span>
+          <select id="f-source">
+            <option value="local">Local (senha do OpenMon)</option>
+            <option value="ldap">Active Directory (senha do domínio)</option>
+          </select>
+        </label>
         <label class="field">
-          <span class="label">Usuário</span>
+          <span class="label" id="l-username">Usuário</span>
           <input id="f-username" maxlength="64" required spellcheck="false" autocapitalize="off" placeholder="joao.silva">
         </label>
         <label class="field">
@@ -88,8 +95,15 @@
           <span class="label">E-mail</span>
           <input id="f-email" type="email" maxlength="254" placeholder="joao@cliente.com.br">
         </label>
+        <p class="note full" id="ldap-new-note" hidden>Entra com o usuário e a senha do domínio, com o perfil e os
+          tenants escolhidos aqui, mesmo que não esteja em nenhum grupo mapeado em AD/LDAP. Use o login do AD
+          (sAMAccountName, ex.: eduardo.becker).</p>
+        <label class="check full" id="groups-field" hidden>
+          <input id="f-from-groups" type="checkbox">
+          <span>Perfil e tenants pelos grupos do AD <span class="muted small">(desmarcado: fixos, definidos aqui)</span></span>
+        </label>
         <p class="note full" id="ldap-note" hidden>Usuário do Active Directory: perfil e tenants são atualizados pelos
-          grupos do AD a cada login. Aqui vale mudar o nome exibido ou desativar o acesso.</p>
+          grupos do AD a cada login. Para fixar o que está aqui, desmarque a caixa acima.</p>
         <div class="field full" id="tenants-field">
           <span class="label">Tenants que este usuário vê</span>
           <input id="f-tenant-filter" class="filter" placeholder="filtrar tenants" spellcheck="false">

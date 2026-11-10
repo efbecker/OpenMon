@@ -32,6 +32,12 @@ só Administrador global).
   usuário (Administrador global > Operador > Cliente). Para Cliente, os tenants
   de todos os grupos de Cliente se somam (tenants desativados não contam).
   Quem não está em nenhum grupo mapeado recebe "sem grupo com acesso".
+* **Pessoa específica sem grupo:** em **Usuários → Novo usuário**, escolha a
+  origem **Active Directory (senha do domínio)**, informe o login do AD
+  (sAMAccountName), o perfil e os tenants. Não há senha inicial: a pessoa entra
+  com a senha do domínio, com esse perfil fixo, mesmo fora dos grupos mapeados.
+  Na edição, a caixa *Perfil e tenants pelos grupos do AD* troca entre fixo e
+  pelos grupos.
 * **Provisionamento no primeiro login:** a conta aparece em **Usuários** com a
   marca *AD*. A cada login o nome, o e-mail, o perfil e os tenants são
   atualizados pelos grupos. Desativar a conta em Usuários bloqueia o acesso

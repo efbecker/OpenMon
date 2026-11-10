@@ -215,20 +215,31 @@ class PgAuthStore:
                             "mappings": [dict(m) for m in maps]})
         return out
 
-    async def upsert_ldap_user(self, directory_id: int, lu: Any, role: str,
-                               tenant_ids: list[int]) -> dict[str, Any] | None:
+    async def upsert_ldap_user(self, directory_id: int, lu: Any,
+                               access: tuple[str, list[int]] | None) -> tuple[dict[str, Any] | None, str | None]:
         """Cria/atualiza o usuário do AD no primeiro login e a cada login (perfil e tenants seguem os grupos).
 
-        None se já existir uma conta local com o mesmo nome (a conta local tem precedência).
+        Usuário do AD cadastrado à mão em Usuários (``external_dn`` NULL) tem perfil e tenants fixos: entra
+        mesmo sem grupo mapeado. Devolve (usuário, None) ou (None, motivo): ``local_user_exists`` se já existir
+        uma conta local com o mesmo nome (a conta local tem precedência), ``no_group`` sem grupo mapeado.
         """
         async with pool.system_transaction() as conn:
             row = await conn.fetchrow(
-                """SELECT id, auth_source FROM users
+                """SELECT id, auth_source, external_dn, ldap_directory_id FROM users
                     WHERE (ldap_directory_id = $1 AND lower(external_dn) = lower($2)) OR lower(username) = lower($3)
                     ORDER BY (ldap_directory_id = $1 AND lower(external_dn) = lower($2)) DESC NULLS LAST LIMIT 1""",
                 directory_id, lu.dn, lu.username)
             if row is not None and row["auth_source"] != "ldap":
-                return None
+                return None, "local_user_exists"
+            fixed = row is not None and row["external_dn"] is None and row["ldap_directory_id"] in (None, directory_id)
+            if fixed:
+                await conn.execute("UPDATE users SET display_name = coalesce(display_name, $2), "
+                                   "email = coalesce(email, $3), ldap_directory_id = $4, updated_at = now() "
+                                   "WHERE id = $1", row["id"], lu.display_name, lu.email, directory_id)
+                return await self._ldap_user_row(conn, row["id"]), None
+            if access is None:
+                return None, "no_group"
+            role, tenant_ids = access
             if row is None:
                 uid = await conn.fetchval(
                     """INSERT INTO users (username, display_name, email, auth_source, ldap_directory_id, external_dn,
@@ -252,11 +263,15 @@ class PgAuthStore:
             if tenant_ids:
                 await conn.execute("INSERT INTO user_tenants (user_id, tenant_id) SELECT $1, unnest($2::bigint[]) "
                                    "ON CONFLICT DO NOTHING", uid, tenant_ids)
-            found = await conn.fetchrow(
-                """SELECT u.id, u.username, u.display_name, u.email, u.auth_source, u.password_hash, u.is_active,
-                          u.locked_until, u.must_change_password, u.last_login_at,
-                          r.code AS role, r.name AS role_name, r.scope
-                     FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1""", uid)
+            return await self._ldap_user_row(conn, uid), None
+
+    @staticmethod
+    async def _ldap_user_row(conn: Any, uid: int) -> dict[str, Any]:
+        found = await conn.fetchrow(
+            """SELECT u.id, u.username, u.display_name, u.email, u.auth_source, u.password_hash, u.is_active,
+                      u.locked_until, u.must_change_password, u.last_login_at,
+                      r.code AS role, r.name AS role_name, r.scope
+                 FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1""", uid)
         return dict(found)
 
     async def password_hash(self, user_id: int) -> str | None:
@@ -473,11 +488,9 @@ async def _ldap_login(directories: list[dict[str, Any]], username: str, password
         except ldapauth.LdapError as exc:
             _ldap_down(ip_text, username, f"{d['name']}: {exc}")
         access = ldapauth.resolve_access(d["mappings"], lu.groups)
-        if access is None:
-            return None, "no_group"
-        user = await store.upsert_ldap_user(d["id"], lu, access[0], access[1])
+        user, reason = await store.upsert_ldap_user(d["id"], lu, access)
         if user is None:
-            return None, "local_user_exists"
+            return None, reason
         if not user["is_active"]:
             return None, "inactive"
         return user, None

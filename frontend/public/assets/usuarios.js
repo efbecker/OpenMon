@@ -7,6 +7,7 @@
   let tenants = [];
   let roles = [];
   let you = null;
+  let directories = [];   // ADs habilitados (para a origem "Active Directory")
   let editing = null;      // usuário em edição (null = novo)
   let pwTarget = null;
 
@@ -26,7 +27,10 @@
     $("table").tBodies[0].replaceChildren(...rows.map((u) => {
       const name = el("td", { cls: "mono", text: u.username });
       if (u.id === you) name.append(" ", el("span", { cls: "tag tag-you", text: "você" }));
-      if (u.auth_source === "ldap") name.append(" ", el("span", { cls: "tag tag-auto", text: "AD" }));
+      if (u.auth_source === "ldap") {
+        name.append(" ", el("span", { cls: "tag tag-auto", text: u.profile_from_groups ? "AD" : "AD · perfil fixo",
+          title: u.profile_from_groups ? "Perfil e tenants pelos grupos do AD" : "Senha do domínio; perfil e tenants definidos aqui" }));
+      }
       const tcell = el("td");
       if (u.scope === "global") tcell.append(el("span", { cls: "muted", text: "todos" }));
       else u.tenants.forEach((t) => tcell.append(el("span", { cls: "tag " + (t.is_active ? "tag-tenant" : "tag-off"), text: t.name }), " "));
@@ -52,6 +56,7 @@
         roles.length ? Promise.resolve({ roles }) : api("GET", "/api/admin/roles")]);
       users = u.users;
       you = u.you;
+      directories = u.ldap_directories || [];
       tenants = t.tenants;
       roles = r.roles;
       const sel = $("tenant-filter");
@@ -102,19 +107,34 @@
     selectedTenants = new Set(u ? u.tenants.map((t) => t.id) : (tf ? [Number(tf)] : []));
     $("f-tenant-filter").value = "";
     renderTenantChecks(selectedTenants);
-    $("password-field").hidden = !!u;
-    $("must-change-field").hidden = !!u;
+    $("source-field").hidden = !!u || !directories.length;
+    $("f-source").value = "local";
     $("f-password").value = u ? "" : randomPassword();
     $("f-must-change").checked = true;
     $("f-active").checked = u ? u.is_active : true;
     $("btn-delete").hidden = !u || u.id === you;
-    $("ldap-note").hidden = !(u && u.auth_source === "ldap");
+    $("f-from-groups").checked = !!(u && u.profile_from_groups);
+    syncSource();
     syncRole();
     showError("form-error", "");
     $("dlg").showModal();
     (u ? $("f-display") : $("f-username")).focus();
   }
 
+  function syncSource() {
+    const ldapNew = !editing && $("f-source").value === "ldap";
+    const ldapEdit = !!(editing && editing.auth_source === "ldap");
+    $("password-field").hidden = !!editing || ldapNew;
+    $("must-change-field").hidden = !!editing || ldapNew;
+    $("ldap-new-note").hidden = !ldapNew;
+    $("groups-field").hidden = !ldapEdit;
+    $("ldap-note").hidden = !(ldapEdit && $("f-from-groups").checked);
+    $("l-username").textContent = ldapNew ? "Usuário do AD" : "Usuário";
+    $("f-username").placeholder = ldapNew ? "eduardo.becker" : "joao.silva";
+  }
+
+  $("f-source").addEventListener("change", syncSource);
+  $("f-from-groups").addEventListener("change", syncSource);
   $("f-role").addEventListener("change", syncRole);
   $("f-tenant-filter").addEventListener("input", () => renderTenantChecks(selectedTenants));
   $("btn-gen").addEventListener("click", () => { $("f-password").value = randomPassword(); });
@@ -129,6 +149,7 @@
       tenant_ids: roleScope($("f-role").value) === "global" ? [] : Array.from(selectedTenants),
       is_active: $("f-active").checked,
     };
+    if (editing && editing.auth_source === "ldap") body.profile_from_groups = $("f-from-groups").checked;
     if (roleScope(body.role) !== "global" && !body.tenant_ids.length) {
       return showError("form-error", "Selecione pelo menos um tenant para o perfil Cliente.");
     }
@@ -139,10 +160,15 @@
         flash(`Usuário ${editing.username} atualizado.`);
       } else {
         body.username = $("f-username").value.trim();
-        body.password = $("f-password").value;
-        body.must_change_password = $("f-must-change").checked;
+        body.auth_source = $("f-source").value;
+        if (body.auth_source === "local") {
+          body.password = $("f-password").value;
+          body.must_change_password = $("f-must-change").checked;
+        }
         await api("POST", "/api/admin/users", body);
-        flash(`Usuário ${body.username} criado. Repasse a senha inicial por um canal seguro.`);
+        flash(body.auth_source === "ldap"
+          ? `Usuário ${body.username} criado: entra com a senha do domínio.`
+          : `Usuário ${body.username} criado. Repasse a senha inicial por um canal seguro.`);
       }
       $("dlg").close();
       await load();

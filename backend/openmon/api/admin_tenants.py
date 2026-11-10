@@ -227,6 +227,9 @@ class UserForm(BaseModel):
     is_active: bool = True
     password: str | None = Field(default=None, max_length=security.PASSWORD_MAX)
     must_change_password: bool = True
+    # 'ldap': entra com a senha do domínio, com o perfil e os tenants definidos aqui (fixos)
+    auth_source: str = Field(default="local", pattern="^(local|ldap)$")
+    ldap_directory_id: int | None = None
 
 
 class UserUpdateForm(BaseModel):
@@ -235,6 +238,8 @@ class UserUpdateForm(BaseModel):
     role: str = Field(min_length=2, max_length=41)
     tenant_ids: list[int] = Field(default_factory=list, max_length=500)
     is_active: bool = True
+    # Só usuários do AD: True = perfil e tenants seguem os grupos a cada login; False = fixos (definidos aqui)
+    profile_from_groups: bool | None = None
 
 
 class PasswordResetForm(BaseModel):
@@ -247,6 +252,8 @@ SELECT u.id, u.username, u.display_name, u.email, u.auth_source, u.is_active, u.
        u.locked_until, u.locked_until IS NOT NULL AND u.locked_until > now() AS locked,
        u.last_login_at, host(u.last_login_ip) AS last_login_ip, u.password_changed_at, u.created_at,
        r.code AS role, r.name AS role_name, r.scope,
+       u.auth_source = 'ldap' AND u.external_dn IS NOT NULL AS profile_from_groups,
+       (SELECT name FROM ldap_directories d WHERE d.id = u.ldap_directory_id) AS ldap_directory,
        coalesce((SELECT json_agg(json_build_object('id', t.id, 'name', t.name, 'slug', t.slug,
                                                    'is_active', t.is_active) ORDER BY lower(t.name))
                    FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
@@ -259,7 +266,7 @@ def _user_out(r: Any) -> dict[str, Any]:
     out = {k: _iso(r[k]) for k in ("id", "username", "display_name", "email", "auth_source", "is_active",
                                     "must_change_password", "locked", "locked_until", "last_login_at",
                                     "last_login_ip", "password_changed_at", "created_at", "role", "role_name",
-                                    "scope")}
+                                    "scope", "profile_from_groups", "ldap_directory")}
     tenants = r["tenants"]
     out["tenants"] = json.loads(tenants) if isinstance(tenants, str) else list(tenants or [])
     return out
@@ -341,9 +348,11 @@ async def list_users(tenant_id: int | None = None,
                 rows = await conn.fetch(
                     _USER_SELECT + " WHERE EXISTS (SELECT 1 FROM user_tenants x WHERE x.user_id = u.id "
                                    "AND x.tenant_id = $1) ORDER BY lower(u.username)", tenant_id)
+            dirs = await conn.fetch("SELECT id, name FROM ldap_directories WHERE is_enabled ORDER BY id")
     except pool.DatabaseUnavailable as exc:
         raise _db_error(exc) from exc
-    return {"users": [_user_out(r) for r in rows], "you": session.user["id"]}
+    return {"users": [_user_out(r) for r in rows], "you": session.user["id"],
+            "ldap_directories": [dict(d) for d in dirs]}
 
 
 @router.post("/users", status_code=201)
@@ -353,29 +362,43 @@ async def create_user(form: UserForm, request: Request,
     username = form.username.strip()
     if not USERNAME_RE.match(username):
         raise HTTPException(422, "Usuário inválido: 2 a 64 caracteres (letras, números, ponto, hífen, _ e @).")
-    password = _password(form.password, username)
+    ldap = form.auth_source == "ldap"
     email = _email(form.email)
-    pw_hash = await asyncio.to_thread(security.hash_password, password)
+    pw_hash = None
+    if not ldap:
+        password = _password(form.password, username)
+        pw_hash = await asyncio.to_thread(security.hash_password, password)
     try:
         async with session.db() as conn:
             role = await _role(conn, form.role)
             ids = await _tenant_ids(conn, role, form.tenant_ids)
+            directory_id = None
+            if ldap:
+                dirs = [r["id"] for r in await conn.fetch(
+                    "SELECT id FROM ldap_directories WHERE is_enabled ORDER BY id")]
+                if not dirs:
+                    raise HTTPException(422, "Nenhum Active Directory habilitado: configure em AD/LDAP primeiro.")
+                directory_id = form.ldap_directory_id or dirs[0]
+                if directory_id not in dirs:
+                    raise HTTPException(422, "Diretório do AD inválido.")
             try:
                 async with conn.transaction():
+                    # Usuário do AD cadastrado aqui: external_dn fica NULL = perfil fixo (os grupos não mudam)
                     uid = await conn.fetchval(
                         """INSERT INTO users (username, display_name, email, auth_source, password_hash, role_id,
-                                              is_active, must_change_password, password_changed_at)
-                           VALUES ($1, $2, $3, 'local', $4, $5, $6, $7, now()) RETURNING id""",
+                                              is_active, must_change_password, password_changed_at, ldap_directory_id)
+                           VALUES ($1, $2, $3, $8, $4, $5, $6, $7, CASE WHEN $8 = 'local' THEN now() END, $9)
+                           RETURNING id""",
                         username, _clean(form.display_name), email, pw_hash, role["id"], form.is_active,
-                        form.must_change_password)
+                        form.must_change_password and not ldap, form.auth_source, directory_id)
             except Exception as exc:
                 if _pg_code(exc) == "23505":
                     raise HTTPException(409, f"Já existe um usuário \"{username}\".") from exc
                 raise
             await _set_tenants(conn, uid, ids)
             await _audit(conn, session, request, "user.create", "user", uid, ids[0] if len(ids) == 1 else None,
-                         {"username": username, "role": role["code"], "tenant_ids": ids,
-                          "is_active": form.is_active, "must_change_password": form.must_change_password})
+                         {"username": username, "role": role["code"], "tenant_ids": ids, "auth_source": form.auth_source,
+                          "is_active": form.is_active, "must_change_password": form.must_change_password and not ldap})
             row = await conn.fetchrow(_USER_SELECT + " WHERE u.id = $1", uid)
     except pool.DatabaseUnavailable as exc:
         raise _db_error(exc) from exc
@@ -414,6 +437,11 @@ async def update_user(user_id: int, form: UserUpdateForm, request: Request,
                     WHERE id = $1""",
                 user_id, _clean(form.display_name), email, role["id"], form.is_active)
             await _set_tenants(conn, user_id, ids)
+            if old["auth_source"] == "ldap" and form.profile_from_groups is not None \
+                    and form.profile_from_groups != old["profile_from_groups"]:
+                # '' = volta a seguir os grupos (o DN real é gravado no próximo login); NULL = fixo
+                await conn.execute("UPDATE users SET external_dn = $2 WHERE id = $1", user_id,
+                                   "" if form.profile_from_groups else None)
             if not form.is_active and old["is_active"]:
                 await _revoke_sessions(conn, user_id)
             old_ids = sorted(t["id"] for t in _user_out(old)["tenants"])
@@ -428,6 +456,9 @@ async def update_user(user_id: int, form: UserUpdateForm, request: Request,
                 changed["is_active"] = form.is_active
             if old_ids != ids:
                 changed["tenant_ids"] = ids
+            if old["auth_source"] == "ldap" and form.profile_from_groups is not None \
+                    and form.profile_from_groups != old["profile_from_groups"]:
+                changed["profile_from_groups"] = form.profile_from_groups
             if changed:
                 action = ("user.deactivate" if changed.get("is_active") is False else
                           "user.activate" if changed.get("is_active") is True else "user.update")

@@ -167,3 +167,43 @@ def test_dc_name_port_and_ignore_certificate(client):
     d = client.put(f"/api/admin/ldap/{d['id']}", json={**body, "verify_tls": True, "bind_password": None},
                    headers=h(csrf)).json()["directory"]
     assert d["verify_tls"] is True
+
+
+def test_ad_user_created_by_admin_has_fixed_profile(client):
+    """Como no OpenFlow: Novo usuário com origem Active Directory, sem senha, perfil e tenant fixos."""
+    csrf, _ = login(client)
+    acme = new_tenant(client, csrf)
+    beta = new_tenant(client, csrf, "beta", "Beta")
+    # Sem AD configurado, a origem AD é recusada
+    r = client.post("/api/admin/users", json={"username": "semgrupo", "role": "operator", "auth_source": "ldap"},
+                    headers=h(csrf))
+    assert r.status_code == 422 and "AD/LDAP" in r.json()["detail"]
+    assert client.post("/api/admin/ldap", json=directory(acme["id"]), headers=h(csrf)).status_code == 201
+    assert client.get("/api/admin/users").json()["ldap_directories"][0]["name"] == "OpenLDAP de teste"
+
+    # "semgrupo" não está em nenhum grupo mapeado: só entra porque foi cadastrado aqui, como Operador
+    r = client.post("/api/admin/users", json={"username": "semgrupo", "role": "operator", "auth_source": "ldap"},
+                    headers=h(csrf))
+    assert r.status_code == 201, r.text
+    u = r.json()["user"]
+    assert u["auth_source"] == "ldap" and u["profile_from_groups"] is False and not u["must_change_password"]
+    assert sql("SELECT password_hash FROM users WHERE username = 'semgrupo'")[0][0] is None
+    login(client, "semgrupo", "SemGrupo-Pass-1")
+    assert client.get("/api/auth/me").json()["user"]["role"] == "operator"
+    login(client, "semgrupo", "errada-errada", status=401)
+
+    # carlos (grupo cliente-acme) cadastrado fixo no tenant Beta: os grupos não mudam o que foi definido aqui
+    csrf, _ = login(client)
+    r = client.post("/api/admin/users", json={"username": "carlos", "role": "client", "tenant_ids": [beta["id"]],
+                                              "auth_source": "ldap"}, headers=h(csrf))
+    cid = r.json()["user"]["id"]
+    login(client, "carlos", "Carlos-Ldap-Pass-1")
+    assert client.get("/api/auth/me").json()["user"]["tenants"] == ["Beta"]
+    # Voltar a seguir os grupos: no próximo login vira cliente da ACME
+    csrf, _ = login(client)
+    r = client.put(f"/api/admin/users/{cid}", json={"role": "client", "tenant_ids": [beta["id"]],
+                                                     "profile_from_groups": True}, headers=h(csrf))
+    assert r.json()["user"]["profile_from_groups"] is True
+    login(client, "carlos", "Carlos-Ldap-Pass-1")
+    assert client.get("/api/auth/me").json()["user"]["tenants"] == ["ACME S.A."]
+    assert sql("SELECT external_dn FROM users WHERE username = 'carlos'")[0][0].startswith("uid=carlos")
