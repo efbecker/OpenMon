@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Inventário</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/inventario.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/inventario.html" class="active" aria-current="page">Inventário</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Inventário <span class="count" id="count"></span></h2>
+          <p class="muted small" id="intro">Equipamentos, hosts e VMs descobertos pelas integrações, com a última leitura de
+            cada um. Cada ativo pertence a um tenant: clientes só veem os seus.</p>
+        </div>
+        <div class="head-actions">
+          <select class="filter" id="filter-tenant" aria-label="Filtrar por tenant"><option value="">Todos os tenants</option></select>
+          <select class="filter" id="filter-type" aria-label="Filtrar por tipo"><option value="">Todos os tipos</option></select>
+          <input class="filter" id="filter-q" type="search" maxlength="100" placeholder="Nome, host ou IP" aria-label="Buscar">
+        </div>
+      </div>
+      <div class="stats" id="summary"></div>
+      <p class="muted small" id="filter-note" hidden></p>
+      <p class="error-text" id="list-error" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Tenant</th><th>Endereço</th><th>Fabricante / modelo</th>
+            <th>Situação</th><th>Leitura</th><th>Interfaces</th><th>Visto em</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum ativo ainda. Cadastre uma integração e aguarde a primeira coleta.</p>
+    </section>
+
+    <section class="card" id="links-card" hidden>
+      <h2><span id="links-title">Links de clientes</span> <span class="count" id="links-count"></span></h2>
+      <p class="muted small" id="links-intro">Portas de equipamentos do datacenter entregues a um cliente, com a banda contratada. O
+        cliente vê só a porta dele, não o equipamento.</p>
+      <div class="table-wrap">
+        <table class="table" id="links">
+          <thead><tr><th>Cliente</th><th>Equipamento</th><th>Interface</th><th>Descrição</th><th>Contratado</th>
+            <th>Entrada</th><th>Saída</th><th>Uso</th><th>Estado</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="detail" hidden>
+      <div class="section-head">
+        <div>
+          <h2 id="d-title"></h2>
+          <p class="muted small" id="d-sub"></p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn ghost" id="btn-close">Fechar</button>
+        </div>
+      </div>
+      <div class="stats" id="d-stats"></div>
+
+      <div id="d-manage" hidden>
+        <h3 class="subhead">Tenant do ativo</h3>
+        <div class="ban-form">
+          <select id="d-tenant" aria-label="Tenant do ativo"></select>
+          <label class="check"><input id="d-locked" type="checkbox" checked><span>Fixar (a coleta e as regras não mudam mais)</span></label>
+          <button type="button" class="btn primary small-btn" id="btn-asset-save">Salvar</button>
+        </div>
+        <p class="muted small">Interfaces que seguiam o tenant do equipamento acompanham; links de cliente mantêm o seu.</p>
+      </div>
+      <p class="ok-text small" id="d-ok" hidden></p>
+      <p class="error-text" id="d-error" hidden></p>
+
+      <div id="d-ifs-box" hidden>
+        <h3 class="subhead">Interfaces <span class="count" id="d-if-count"></span></h3>
+        <div class="head-actions left">
+          <input class="filter" id="if-q" type="search" maxlength="60" placeholder="Filtrar interfaces" aria-label="Filtrar interfaces">
+          <label class="check"><input id="if-only" type="checkbox"><span>Só as monitoradas</span></label>
+        </div>
+        <p class="muted small" id="if-help" hidden>Marque <strong>Monitorar</strong> para coletar tráfego e erros. Uma porta
+          que atende um cliente vira <strong>Link de cliente</strong>: escolha o tenant dele e a banda contratada, e o
+          cliente passa a ver só aquela interface.</p>
+        <div class="table-wrap">
+          <table class="table" id="ifs">
+            <thead><tr><th>#</th><th>Interface</th><th>Descrição</th><th>Velocidade</th><th>Estado</th><th>Entrada</th>
+              <th>Saída</th><th>Monitorar</th><th>Link de cliente</th><th>Tenant</th><th>Contratado (Mbps)</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

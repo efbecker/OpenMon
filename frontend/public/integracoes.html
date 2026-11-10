@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Integrações</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/integracoes.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/integracoes.html" data-nav="global" class="active" aria-current="page">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Integrações <span class="count" id="count"></span></h2>
+          <p class="muted small">O que o OpenMon coleta: VMware vCenter, hosts Hyper-V (WinRM), Veeam Backup &amp;
+            Replication (REST) e equipamentos SNMP v2c/v3. Senhas, comunidades e chaves SNMPv3 ficam no cofre
+            (AES-256-GCM) e nunca voltam para o navegador. A coleta roda nos serviços <code>openmon-collector@*</code>
+            do Servidor 1, no intervalo de cada integração.</p>
+        </div>
+        <div class="head-actions">
+          <select class="filter" id="filter-kind" aria-label="Filtrar por tipo">
+            <option value="">Todos os tipos</option>
+          </select>
+          <button type="button" class="btn primary" id="btn-new">Nova integração</button>
+        </div>
+      </div>
+      <p class="error-text" id="list-error" hidden></p>
+      <p class="ok-text small" id="list-ok" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Endereço</th><th>Tenant</th><th>Ativos</th><th>Intervalo</th>
+            <th>Última coleta</th><th>Situação</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhuma integração cadastrada ainda.</p>
+    </section>
+
+    <section class="card" id="editor" hidden>
+      <form id="form" novalidate autocomplete="off">
+        <div class="section-head">
+          <h2 id="form-title">Nova integração</h2>
+          <label class="check"><input id="f-enabled" type="checkbox" checked><span>Coleta habilitada</span></label>
+        </div>
+        <div class="grid two mt">
+          <label class="field">
+            <span class="label">Tipo</span>
+            <select id="f-kind"></select>
+          </label>
+          <label class="field">
+            <span class="label">Nome</span>
+            <input id="f-name" maxlength="120" placeholder="core-sw-01">
+          </label>
+          <label class="field">
+            <span class="label" id="l-endpoint">Endereço (DNS ou IP)</span>
+            <input id="f-endpoint" maxlength="255" spellcheck="false" placeholder="10.0.0.1">
+          </label>
+          <div class="grid two inner">
+            <label class="field">
+              <span class="label">Porta</span>
+              <input id="f-port" type="number" min="1" max="65535">
+            </label>
+            <label class="field">
+              <span class="label">Intervalo (s)</span>
+              <input id="f-interval" type="number" min="10" max="86400">
+            </label>
+          </div>
+          <label class="field">
+            <span class="label">Tenant dono</span>
+            <select id="f-tenant"></select>
+            <span class="muted small" id="tenant-hint"></span>
+          </label>
+          <label class="field" data-kinds="snmp">
+            <span class="label">Tipo de equipamento</span>
+            <select id="f-asset-type">
+              <option value="network_switch">Switch</option>
+              <option value="router">Roteador</option>
+              <option value="firewall">Firewall</option>
+              <option value="storage">Storage</option>
+              <option value="physical_server">Servidor físico</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <label class="field" data-kinds="hyperv">
+            <span class="label">Autenticação WinRM</span>
+            <select id="f-transport">
+              <option value="ntlm">NTLM</option>
+              <option value="kerberos">Kerberos</option>
+              <option value="credssp">CredSSP</option>
+            </select>
+          </label>
+          <label class="field full" data-kinds="hyperv">
+            <span class="label">Hosts Hyper-V (um por linha; em branco = só o endereço acima)</span>
+            <textarea id="f-hosts" rows="3" spellcheck="false" placeholder="hv01.empresa.local&#10;hv02.empresa.local"></textarea>
+            <span class="muted small">Uma sessão WinRM por host traz todas as VMs dele de uma vez (JSON).</span>
+          </label>
+          <label class="field" data-kinds="veeam">
+            <span class="label">Versão da API REST</span>
+            <input id="f-api-version" maxlength="20" spellcheck="false" placeholder="1.1-rev1">
+          </label>
+
+          <label class="field" data-kinds="snmp">
+            <span class="label">Versão SNMP</span>
+            <select id="f-version">
+              <option value="2c">v2c (comunidade)</option>
+              <option value="3">v3 (usuário, autenticação e criptografia)</option>
+            </select>
+          </label>
+          <label class="field" data-kinds="snmp" data-snmp="2c">
+            <span class="label">Comunidade</span>
+            <input id="f-community" type="password" maxlength="1024" autocomplete="new-password">
+            <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
+          </label>
+
+          <label class="field" data-kinds="snmp" data-snmp="3">
+            <span class="label">Usuário SNMPv3</span>
+            <input id="f-v3-user" maxlength="256" spellcheck="false">
+          </label>
+          <label class="field" data-kinds="snmp" data-snmp="3">
+            <span class="label">Contexto (opcional)</span>
+            <input id="f-context" maxlength="128" spellcheck="false">
+          </label>
+          <label class="field" data-kinds="snmp" data-snmp="3">
+            <span class="label">Autenticação</span>
+            <select id="f-auth-proto">
+              <option value="">Nenhuma (noAuthNoPriv)</option>
+              <option value="sha256">SHA-256</option>
+              <option value="sha">SHA-1</option>
+              <option value="md5">MD5</option>
+            </select>
+          </label>
+          <label class="field" data-kinds="snmp" data-snmp="3">
+            <span class="label">Senha de autenticação</span>
+            <input id="f-auth-pw" type="password" maxlength="256" autocomplete="new-password">
+            <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
+          </label>
+          <label class="field" data-kinds="snmp" data-snmp="3">
+            <span class="label">Criptografia</span>
+            <select id="f-priv-proto">
+              <option value="">Nenhuma (authNoPriv)</option>
+              <option value="aes">AES-128</option>
+              <option value="des">DES</option>
+            </select>
+          </label>
+          <label class="field" data-kinds="snmp" data-snmp="3">
+            <span class="label">Senha de criptografia</span>
+            <input id="f-priv-pw" type="password" maxlength="256" autocomplete="new-password">
+            <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
+          </label>
+
+          <label class="field" data-kinds="vmware_vcenter hyperv veeam">
+            <span class="label" id="l-user">Usuário</span>
+            <input id="f-user" maxlength="256" spellcheck="false">
+          </label>
+          <label class="field" data-kinds="vmware_vcenter hyperv veeam">
+            <span class="label">Senha</span>
+            <input id="f-secret" type="password" maxlength="1024" autocomplete="new-password">
+            <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
+          </label>
+
+          <details class="advanced full">
+            <summary>Avançado: certificado, tempo limite e descoberta</summary>
+            <div class="grid two">
+              <label class="check" data-kinds="vmware_vcenter hyperv veeam">
+                <input id="f-verify" type="checkbox" checked><span>Validar o certificado TLS do servidor</span>
+              </label>
+              <label class="check" data-kinds="hyperv">
+                <input id="f-https" type="checkbox" checked><span>WinRM por HTTPS (5986)</span>
+              </label>
+              <label class="field full" data-kinds="vmware_vcenter hyperv veeam">
+                <span class="label">Certificado da CA (PEM, opcional)</span>
+                <textarea id="f-ca" rows="4" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                <span class="muted small">Para certificados emitidos pela CA interna. Em branco, valem as CAs do sistema.</span>
+              </label>
+              <label class="field" data-kinds="snmp">
+                <span class="label">Tempo limite (ms)</span>
+                <input id="f-timeout" type="number" min="200" max="30000">
+              </label>
+              <label class="field" data-kinds="snmp">
+                <span class="label">Tentativas</span>
+                <input id="f-retries" type="number" min="0" max="5">
+              </label>
+              <label class="field" data-kinds="snmp">
+                <span class="label">Redescobrir interfaces a cada (min)</span>
+                <input id="f-discovery" type="number" min="5" max="1440">
+              </label>
+            </div>
+          </details>
+        </div>
+
+        <div class="test-result" id="test-result" hidden></div>
+        <p class="error-text" id="form-error" hidden></p>
+        <div class="actions">
+          <button type="button" class="btn danger" id="btn-delete" hidden>Excluir</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost" id="btn-test">Testar conexão</button>
+          <button type="button" class="btn ghost" id="btn-cancel">Cancelar</button>
+          <button type="submit" class="btn deploy" id="btn-save">Salvar</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Somente os perfis do datacenter veem as integrações.</p>
+      <a class="btn ghost" href="/home.html">Voltar ao início</a>
+    </section>
+  </main>
+</body>
+</html>

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import os
 import ssl
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -97,7 +98,8 @@ async def get_pool() -> Any:
             try:
                 _pool = await asyncpg.create_pool(
                     host=s.host, port=s.port, database=s.name, user=s.user, password=s.password,
-                    ssl=s.ssl_context(), min_size=0, max_size=10, timeout=10, command_timeout=30,
+                    ssl=s.ssl_context(), min_size=0, max_size=int(os.environ.get("OPENMON_DB_POOL_MAX", "10")), timeout=10,
+                    command_timeout=int(os.environ.get("OPENMON_DB_COMMAND_TIMEOUT", "30")),
                     max_inactive_connection_lifetime=300,
                     server_settings={"application_name": "openmon-api", "search_path": "openmon"})
             except Exception as exc:  # asyncpg.PostgresError, OSError, ssl.SSLError...
