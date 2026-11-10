@@ -75,7 +75,8 @@ atualizar, rode o mesmo comando.
 | 4. Assistente web do deploy do banco (token de instalação, terminal ao vivo) | ✅ |
 | 5a. Primeiro administrador, login local (Argon2id, sessão, CSRF, bloqueio), página inicial | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md) |
 | 5b. Tela Segurança: acessos, IPs bloqueados, bloquear/desbloquear (Fail2ban) | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md#tela-segurança-fail2ban-só-na-vm-1) |
-| 5c. Login AD/LDAP, RBAC nas telas, tenants, cofre | próximo |
+| 5c. Tenants e usuários por tenant (RBAC, RLS, senha provisória, auditoria) | ✅ [docs/05-tenants-e-usuarios.md](docs/05-tenants-e-usuarios.md) |
+| 5d. Login AD/LDAP (opcional) | próximo |
 | 6. Coletores vCenter, Hyper-V, Veeam e SNMP | — |
 | 7. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
 
@@ -105,6 +106,7 @@ docs/                      arquitetura, banco e deploy
 ```bash
 cd backend
 python3 -m pytest -q tests                        # unitários
+OPENMON_TEST_PG=postgresql://postgres:SENHA@127.0.0.1:55432/postgres python3 -m pytest -q tests  # + RLS num TimescaleDB real
 docker build -t openmon-e2e-vm2 tests/e2e && python3 tests/e2e/run_e2e.py   # ponta a ponta
 ```
 

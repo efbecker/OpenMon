@@ -173,7 +173,13 @@
     try { me = await api("GET", "/api/auth/me"); } catch (_) { return; }
     csrf = me.csrf_token;
     const u = me.user;
+    if (u.must_change_password) { location.replace("/senha.html"); return; }
     $("user-chip").textContent = `${u.display_name || u.username} · ${ROLE[u.role] || u.role}`;
+    document.querySelectorAll("[data-nav]").forEach((a) => {
+      const need = a.getAttribute("data-nav");
+      a.hidden = (need === "admin" && u.role !== "global_admin") || (need === "global" && u.scope !== "global");
+    });
+    $("nav").hidden = false;
     if (u.role !== "global_admin") { $("denied").hidden = false; return; }
     $("main").hidden = false;
     load();

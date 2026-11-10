@@ -45,10 +45,31 @@ class SessionInfo:
     user: dict[str, Any]
     expires_at: datetime
     tenant_ids: list[int] = field(default_factory=list)
+    permissions: frozenset[str] = frozenset()
 
     @property
     def is_global(self) -> bool:
         return self.user.get("scope") == "global"
+
+    def can(self, permission: str) -> bool:
+        return permission in self.permissions
+
+    def db(self) -> Any:
+        """Transação com o contexto de RLS deste usuário (escopo global ou só os tenants dele)."""
+        return pool.transaction(self.user["id"], self.is_global, () if self.is_global else self.tenant_ids)
+
+
+# Permissões dos perfis embutidos (migration 0001). O banco é a fonte; isto é o
+# reserva para sessões carregadas sem a lista (testes e bancos antigos).
+BUILTIN_PERMISSIONS: dict[str, frozenset[str]] = {
+    "global_admin": frozenset({
+        "dashboard.view", "assets.view", "assets.manage", "integrations.manage", "credentials.manage",
+        "alerts.view", "alerts.ack", "alerts.manage", "backups.view", "reports.view", "tenants.manage",
+        "users.manage", "audit.view", "system.backup", "system.settings"}),
+    "operator": frozenset({"dashboard.view", "assets.view", "assets.manage", "alerts.view", "alerts.ack",
+                           "alerts.manage", "backups.view", "reports.view", "audit.view"}),
+    "client": frozenset({"dashboard.view", "assets.view", "alerts.view", "backups.view", "reports.view"}),
+}
 
 
 # -----------------------------------------------------------------------------
@@ -95,7 +116,9 @@ class PgAuthStore:
             row = await conn.fetchrow(
                 """SELECT u.id, u.username, u.display_name, u.email, u.auth_source, u.password_hash,
                           u.is_active, u.locked_until, u.must_change_password,
-                          r.code AS role, r.name AS role_name, r.scope
+                          r.code AS role, r.name AS role_name, r.scope,
+                          EXISTS (SELECT 1 FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+                                   WHERE ut.user_id = u.id AND t.is_active) AS has_active_tenant
                      FROM users u JOIN roles r ON r.id = u.role_id
                     WHERE lower(u.username) = lower($1)""", username)
         return dict(row) if row else None
@@ -154,9 +177,35 @@ class PgAuthStore:
                 RETURNING s.csrf_token_hash, s.expires_at, u.id, u.username, u.display_name, u.email,
                           u.auth_source, u.must_change_password, u.last_login_at,
                           r.code AS role, r.name AS role_name, r.scope,
-                          ARRAY(SELECT tenant_id FROM user_tenants ut WHERE ut.user_id = u.id) AS tenant_ids""",
+                          ARRAY(SELECT ut.tenant_id FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+                                 WHERE ut.user_id = u.id AND t.is_active ORDER BY t.name) AS tenant_ids,
+                          ARRAY(SELECT t.name FROM user_tenants ut JOIN tenants t ON t.id = ut.tenant_id
+                                 WHERE ut.user_id = u.id AND t.is_active ORDER BY t.name) AS tenant_names,
+                          ARRAY(SELECT rp.permission_code FROM role_permissions rp
+                                 WHERE rp.role_id = u.role_id) AS permissions""",
                 token_hash, idle_minutes)
         return dict(row) if row else None
+
+    async def password_hash(self, user_id: int) -> str | None:
+        async with pool.system_transaction() as conn:
+            return await conn.fetchval("SELECT password_hash FROM users WHERE id = $1 AND auth_source = 'local'",
+                                       user_id)
+
+    async def change_password(self, user: dict[str, Any], new_hash: str, keep_token_hash: bytes,
+                              ip: str | None, ua: str) -> None:
+        """Troca a própria senha e encerra as outras sessões do usuário."""
+        async with pool.system_transaction() as conn:
+            await conn.execute(
+                """UPDATE users SET password_hash = $2, must_change_password = false, password_changed_at = now(),
+                          failed_login_count = 0, locked_until = NULL, updated_at = now()
+                    WHERE id = $1""", user["id"], new_hash)
+            await conn.execute(
+                "UPDATE user_sessions SET revoked_at = now() WHERE user_id = $1 AND token_hash <> $2 "
+                "AND revoked_at IS NULL", user["id"], keep_token_hash)
+            await conn.execute(
+                """INSERT INTO audit_log (user_id, username, client_ip, user_agent, action, object_type, object_id)
+                   VALUES ($1::bigint, $2, $3::inet, $4, 'auth.password_change', 'user', ($1::bigint)::text)""",
+                user["id"], user["username"], ip, ua)
 
     async def revoke_session(self, token_hash: bytes, user: dict[str, Any], ip: str | None, ua: str) -> None:
         async with pool.system_transaction() as conn:
@@ -191,8 +240,12 @@ async def current_session(request: Request) -> SessionInfo:
         raise HTTPException(401, "Sessão expirada. Entre novamente.")
     user = {k: row[k] for k in ("id", "username", "display_name", "email", "auth_source", "role",
                                 "role_name", "scope", "must_change_password", "last_login_at") if k in row}
+    user["tenant_names"] = list(row.get("tenant_names") or [])
+    perms = row.get("permissions")
+    permissions = frozenset(perms) if perms is not None else BUILTIN_PERMISSIONS.get(user.get("role", ""), frozenset())
     return SessionInfo(token=token, token_hash=token_hash, csrf_hash=row["csrf_token_hash"], user=user,
-                       expires_at=row["expires_at"], tenant_ids=list(row.get("tenant_ids") or []))
+                       expires_at=row["expires_at"], tenant_ids=list(row.get("tenant_ids") or []),
+                       permissions=permissions)
 
 
 async def require_csrf(session: SessionInfo = Depends(current_session),
@@ -202,11 +255,38 @@ async def require_csrf(session: SessionInfo = Depends(current_session),
     return session
 
 
+PASSWORD_CHANGE_FIRST = "Troque a sua senha antes de continuar."
+
+
+def _ready(session: SessionInfo) -> SessionInfo:
+    if session.user.get("must_change_password"):
+        raise HTTPException(403, PASSWORD_CHANGE_FIRST)
+    return session
+
+
+def require_permission(permission: str, write: bool = False) -> Any:
+    """Dependência: sessão válida (CSRF nos métodos de escrita), senha já trocada e a permissão do perfil."""
+    async def dep_read(session: SessionInfo = Depends(current_session)) -> SessionInfo:
+        return _check(session)
+
+    async def dep_write(session: SessionInfo = Depends(require_csrf)) -> SessionInfo:
+        return _check(session)
+
+    def _check(session: SessionInfo) -> SessionInfo:
+        _ready(session)
+        if not session.can(permission):
+            raise HTTPException(403, "Seu perfil não tem acesso a esta função.")
+        return session
+
+    return dep_write if write else dep_read
+
+
 def _public_user(user: dict[str, Any]) -> dict[str, Any]:
     last = user.get("last_login_at")
     return {"id": user["id"], "username": user["username"], "display_name": user.get("display_name"),
             "email": user.get("email"), "role": user["role"], "role_name": user.get("role_name"),
             "scope": user.get("scope"), "must_change_password": bool(user.get("must_change_password")),
+            "auth_source": user.get("auth_source", "local"), "tenants": list(user.get("tenant_names") or []),
             "last_login_at": last.isoformat() if isinstance(last, datetime) else last}
 
 
@@ -236,7 +316,8 @@ async def login(form: LoginForm, request: Request, response: Response) -> dict[s
             user and user["locked_until"] and user["locked_until"] > datetime.now(timezone.utc))
 
         ok, new_hash = False, None
-        if user and user["auth_source"] == "local" and user["is_active"] and not locked:
+        no_tenant = bool(user and user.get("scope") == "tenant" and not user.get("has_active_tenant", True))
+        if user and user["auth_source"] == "local" and user["is_active"] and not locked and not no_tenant:
             ok, new_hash = await asyncio.to_thread(security.verify_password, user["password_hash"], form.password)
         else:
             await asyncio.to_thread(security.verify_password, None, form.password)  # mesmo custo
@@ -244,7 +325,8 @@ async def login(form: LoginForm, request: Request, response: Response) -> dict[s
         if not ok:
             reason = ("locked" if locked else "unknown_user" if not user else
                       "inactive" if not user["is_active"] else
-                      "ldap_not_configured" if user["auth_source"] != "local" else "bad_password")
+                      "ldap_not_configured" if user["auth_source"] != "local" else
+                      "no_active_tenant" if no_tenant else "bad_password")
             await store.record_attempt(username, ip, False, reason)
             just_locked = by_user + 1 >= lockout["max_failures"]
             if user and reason == "bad_password":
@@ -268,7 +350,8 @@ async def login(form: LoginForm, request: Request, response: Response) -> dict[s
         if isinstance(expires, datetime) else settings["auth.session"]["absolute_hours"] * 3600
     response.set_cookie(COOKIE, token, max_age=max_age, path="/", secure=True, httponly=True, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
-    return {"user": _public_user(user), "csrf_token": csrf, "redirect": "/home.html"}
+    redirect = "/senha.html" if user.get("must_change_password") else "/home.html"
+    return {"user": _public_user(user), "csrf_token": csrf, "redirect": redirect}
 
 
 @router.get("/me")
@@ -290,3 +373,36 @@ async def logout(request: Request, response: Response,
     response.delete_cookie(COOKIE, path="/", secure=True, httponly=True, samesite="strict")
     return {"ok": True, "redirect": "/login.html"}
 
+
+
+class PasswordForm(BaseModel):
+    current_password: str = Field(min_length=1, max_length=security.PASSWORD_MAX)
+    new_password: str = Field(min_length=1, max_length=security.PASSWORD_MAX)
+
+
+@router.post("/password")
+async def change_password(form: PasswordForm, request: Request,
+                          session: SessionInfo = Depends(require_csrf)) -> dict[str, Any]:
+    """Troca a própria senha (contas locais). Obrigatória quando o administrador definiu uma senha provisória."""
+    user = session.user
+    if user.get("auth_source", "local") != "local":
+        raise HTTPException(409, "A senha desta conta é gerenciada pelo Active Directory/LDAP.")
+    problem = security.password_problem(form.new_password, user["username"])
+    if problem:
+        raise HTTPException(422, problem)
+    if form.new_password == form.current_password:
+        raise HTTPException(422, "A nova senha precisa ser diferente da atual.")
+    ip_text = security.client_ip(request)
+    try:
+        stored = await store.password_hash(user["id"])
+        ok, _ = await asyncio.to_thread(security.verify_password, stored, form.current_password)
+        if not ok:
+            authlog.event("auth.password_change_failure", ip_text, username=user["username"], source="local")
+            raise HTTPException(422, "A senha atual não confere.")
+        new_hash = await asyncio.to_thread(security.hash_password, form.new_password)
+        await store.change_password(user, new_hash, session.token_hash, security.inet_or_none(ip_text),
+                                    security.user_agent(request))
+    except pool.DatabaseUnavailable as exc:
+        raise _db_error(exc) from exc
+    authlog.event("auth.password_change", ip_text, username=user["username"], source="local")
+    return {"ok": True, "redirect": "/home.html"}

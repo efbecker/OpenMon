@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Usuários</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/usuarios.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin" class="active" aria-current="page">Usuários</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Usuários <span class="count" id="count"></span></h2>
+          <p class="muted small">Administrador global: acesso total. Operador: monitora todos os tenants, sem administrar
+            o sistema. Cliente: vê somente os tenants vinculados. Senhas com Argon2id; a senha definida aqui é
+            provisória e o usuário troca no primeiro acesso.</p>
+        </div>
+        <div class="head-actions">
+          <select id="tenant-filter" class="filter"><option value="">Todos os tenants</option></select>
+          <input id="filter" class="filter" placeholder="filtrar usuários" spellcheck="false">
+          <button type="button" class="btn primary" id="btn-new">Novo usuário</button>
+        </div>
+      </div>
+      <p class="error-text" id="list-error" hidden></p>
+      <p class="ok-text small" id="list-ok" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Usuário</th><th>Nome</th><th>Perfil</th><th>Tenants</th><th>Situação</th>
+            <th>Último login</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum usuário encontrado.</p>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Somente o Administrador Global gerencia usuários.</p>
+      <a class="btn ghost" href="/home.html">Voltar ao início</a>
+    </section>
+  </main>
+
+  <dialog class="modal" id="dlg">
+    <form id="form" method="dialog" novalidate autocomplete="off">
+      <h2 id="dlg-title">Novo usuário</h2>
+      <div class="grid two">
+        <label class="field">
+          <span class="label">Usuário</span>
+          <input id="f-username" maxlength="64" required spellcheck="false" autocapitalize="off" placeholder="joao.silva">
+        </label>
+        <label class="field">
+          <span class="label">Perfil</span>
+          <select id="f-role"></select>
+        </label>
+        <label class="field">
+          <span class="label">Nome</span>
+          <input id="f-display" maxlength="120" placeholder="João Silva">
+        </label>
+        <label class="field">
+          <span class="label">E-mail</span>
+          <input id="f-email" type="email" maxlength="254" placeholder="joao@cliente.com.br">
+        </label>
+        <div class="field full" id="tenants-field">
+          <span class="label">Tenants que este usuário vê</span>
+          <input id="f-tenant-filter" class="filter" placeholder="filtrar tenants" spellcheck="false">
+          <div class="checklist" id="f-tenants"></div>
+        </div>
+        <p class="muted small full" id="global-hint" hidden>Perfis do datacenter enxergam todos os tenants.</p>
+        <div class="field full" id="password-field">
+          <span class="label">Senha inicial</span>
+          <div class="row">
+            <input id="f-password" type="text" maxlength="256" spellcheck="false" autocomplete="new-password">
+            <button type="button" class="btn ghost" id="btn-gen">Gerar</button>
+          </div>
+          <span class="muted small">12+ caracteres, sem o nome de usuário. Repasse ao usuário por um canal seguro.</span>
+        </div>
+        <label class="check full" id="must-change-field">
+          <input id="f-must-change" type="checkbox" checked>
+          <span>Exigir troca de senha no primeiro acesso</span>
+        </label>
+        <label class="check full">
+          <input id="f-active" type="checkbox" checked>
+          <span>Ativo <span class="muted small">(desativar encerra as sessões abertas na hora)</span></span>
+        </label>
+      </div>
+      <p class="error-text" id="form-error" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn danger" id="btn-delete" hidden>Excluir</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="btn-cancel">Cancelar</button>
+        <button type="submit" class="btn deploy" id="btn-save">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="dlg-pw">
+    <form id="form-pw" method="dialog" novalidate autocomplete="off">
+      <h2>Redefinir senha de <span id="pw-user"></span></h2>
+      <p class="muted small">As sessões abertas deste usuário são encerradas e o bloqueio por tentativas é zerado.</p>
+      <div class="field">
+        <span class="label">Nova senha</span>
+        <div class="row">
+          <input id="pw-password" type="text" maxlength="256" spellcheck="false" autocomplete="new-password">
+          <button type="button" class="btn ghost" id="pw-gen">Gerar</button>
+        </div>
+      </div>
+      <label class="check mt">
+        <input id="pw-must-change" type="checkbox" checked>
+        <span>Exigir troca de senha no próximo acesso</span>
+      </label>
+      <p class="error-text" id="pw-error" hidden></p>
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="pw-cancel">Cancelar</button>
+        <button type="submit" class="btn deploy" id="pw-save">Redefinir</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

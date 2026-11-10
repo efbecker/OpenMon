@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Tenants</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/tenants.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/tenants.html" data-nav="global" class="active" aria-current="page">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Tenants <span class="count" id="count"></span></h2>
+          <p class="muted small">Cada tenant é um cliente. Usuários com o perfil Cliente veem somente os ativos,
+            métricas, links, backups e relatórios dos tenants a que estão vinculados; o isolamento também é
+            aplicado no banco (Row-Level Security). O tenant do datacenter guarda a infraestrutura compartilhada.</p>
+        </div>
+        <div class="head-actions">
+          <input id="filter" class="filter" placeholder="filtrar tenants" spellcheck="false">
+          <button type="button" class="btn primary" id="btn-new" hidden>Novo tenant</button>
+        </div>
+      </div>
+      <p class="error-text" id="list-error" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr><th>Nome</th><th>Identificador</th><th>Situação</th><th>Usuários</th><th>Ativos</th>
+            <th>Integrações</th><th>SLA de backup</th><th>Contato</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhum tenant encontrado.</p>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Somente os perfis do datacenter (Administrador global e Operador) acessam a lista de tenants.</p>
+      <a class="btn ghost" href="/home.html">Voltar ao início</a>
+    </section>
+  </main>
+
+  <dialog class="modal" id="dlg">
+    <form id="form" method="dialog" novalidate autocomplete="off">
+      <h2 id="dlg-title">Novo tenant</h2>
+      <div class="grid two">
+        <label class="field full">
+          <span class="label">Nome</span>
+          <input id="f-name" maxlength="120" required placeholder="ex.: ACME Indústria S.A.">
+        </label>
+        <label class="field">
+          <span class="label">Identificador</span>
+          <input id="f-slug" maxlength="63" required spellcheck="false" placeholder="acme">
+          <span class="muted small">Minúsculas, números e hífen. Usado em relatórios e regras automáticas.</span>
+        </label>
+        <label class="field">
+          <span class="label">SLA de backup (horas)</span>
+          <input id="f-sla" type="number" min="1" max="8760" placeholder="ex.: 24">
+          <span class="muted small">RPO contratado: alerta se o último backup Veeam for mais antigo.</span>
+        </label>
+        <label class="field full">
+          <span class="label">E-mail de contato</span>
+          <input id="f-email" type="email" maxlength="254" placeholder="noc@cliente.com.br">
+        </label>
+        <label class="field full">
+          <span class="label">Observações</span>
+          <textarea id="f-notes" maxlength="2000" rows="3"></textarea>
+        </label>
+        <label class="check full">
+          <input id="f-active" type="checkbox" checked>
+          <span>Ativo <span class="muted small">(desativado: os usuários Cliente deste tenant deixam de entrar)</span></span>
+        </label>
+      </div>
+      <p class="error-text" id="form-error" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn danger" id="btn-delete" hidden>Excluir</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="btn-cancel">Cancelar</button>
+        <button type="submit" class="btn deploy" id="btn-save">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

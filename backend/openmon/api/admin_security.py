@@ -90,6 +90,7 @@ async def login_summary(hours: int = LOGIN_WINDOW_H) -> list[dict[str, Any]]:
                       (array_agg(DISTINCT username))[1:5] AS usernames
                  FROM login_attempts
                 WHERE time > now() - make_interval(hours => $1)
+                  AND coalesce(reason, '') <> 'admin_unlock'
                 GROUP BY client_ip
                 ORDER BY max(time) DESC
                 LIMIT 500""", hours)

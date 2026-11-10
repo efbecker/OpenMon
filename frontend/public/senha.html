@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Minha senha</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/senha.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="auth-page" id="main" hidden>
+    <section class="card auth-card">
+      <h1>Trocar senha</h1>
+      <p class="muted small" id="intro">Escolha uma nova senha para a sua conta.</p>
+      <div class="note" id="must-note" hidden>O administrador definiu uma senha provisória para você. Troque-a para continuar.</div>
+      <form id="form" novalidate>
+        <input type="text" id="f-username" autocomplete="username" hidden>
+        <label class="field">
+          <span class="label">Senha atual</span>
+          <input id="f-current" type="password" required autocomplete="current-password">
+        </label>
+        <label class="field">
+          <span class="label">Nova senha</span>
+          <input id="f-new" type="password" required autocomplete="new-password" minlength="12" maxlength="256">
+        </label>
+        <label class="field">
+          <span class="label">Repita a nova senha</span>
+          <input id="f-new2" type="password" required autocomplete="new-password" maxlength="256">
+        </label>
+        <p class="muted small">12+ caracteres, sem o nome de usuário. As suas outras sessões serão encerradas.</p>
+        <p class="error-text" id="form-error" hidden></p>
+        <button type="submit" class="btn deploy" id="btn-save">Trocar senha</button>
+      </form>
+      <p class="auth-foot"><a href="/home.html" id="back">Voltar ao início</a></p>
+    </section>
+  </main>
+
+  <main class="page" id="ldap" hidden>
+    <section class="card">
+      <h2>Senha do Active Directory</h2>
+      <p class="muted">A senha da sua conta é gerenciada pelo Active Directory/LDAP. Troque-a pelos meios da sua empresa.</p>
+      <a class="btn ghost" href="/home.html">Voltar ao início</a>
+    </section>
+  </main>
+</body>
+</html>
