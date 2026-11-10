@@ -68,6 +68,17 @@ Ajustes manuais vão em `conf.d/99-local.conf`, que o deploy não sobrescreve.
 
 ## Uso
 
+Pelo instalador, numa VM 1 recém-instalada (faz a VM 1 e já dispara este deploy):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/efbecker/OpenMon/main/scripts/install.sh \
+  | sudo bash -s -- --db-host 10.10.0.20 --db-ssh-user admin
+```
+
+O instalador descobre sozinho o IP de saída da VM 1 até a VM 2 (`ip route get`)
+e o usa em `--frontend-address`. As perguntas (impressão digital, senhas) vão
+pelo terminal (`/dev/tty`), então funcionam mesmo com `curl | bash`.
+
 Pela CLI (o assistente web vai usar o mesmo motor):
 
 ```bash
