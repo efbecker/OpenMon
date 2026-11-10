@@ -53,6 +53,7 @@
       stat("Último login", fmt(u.last_login_at)),
       stat("Versão", version || "—"),
     );
+    $("nav").hidden = u.role !== "global_admin";
     $("home").hidden = false;
   }
 

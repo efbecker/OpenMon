@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Segurança</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/seguranca.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav">
+        <a href="/home.html">Início</a>
+        <a href="/seguranca.html" class="active" aria-current="page">Segurança</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <span class="user-chip" id="user-chip"></span>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Acessos e bloqueios (Fail2ban)</h2>
+          <p class="muted small">Servidor 1. IPs com muitas falhas de login são bloqueados automaticamente por 1 hora
+            (reincidentes, por mais tempo). Bloqueios manuais valem até você desbloquear. Bloquear fecha só as portas
+            80 e 443: o SSH continua acessível.</p>
+        </div>
+        <button type="button" class="btn ghost" id="btn-refresh">Atualizar</button>
+      </div>
+      <div class="note" id="bridge-note" hidden></div>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section class="card">
+      <h2>Bloquear um IP</h2>
+      <form id="ban-form" class="ban-form" autocomplete="off" novalidate>
+        <input id="ban-ip" placeholder="ex.: 203.0.113.50" spellcheck="false" required>
+        <input id="ban-reason" placeholder="motivo (opcional)" maxlength="200">
+        <button type="submit" class="btn danger" id="btn-ban">Bloquear</button>
+      </form>
+      <p class="error-text" id="ban-error" hidden></p>
+      <p class="ok-text small" id="ban-ok" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>IPs bloqueados agora <span class="count" id="bans-count"></span></h2>
+      <div class="table-wrap">
+        <table class="table" id="bans-table">
+          <thead><tr><th>IP</th><th>Origem</th><th>Desde</th><th>Até</th><th>Motivo</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="bans-empty" hidden>Nenhum IP bloqueado.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>Quem acessou nas últimas <span id="window-h">24</span> h <span class="count" id="ips-count"></span></h2>
+        <input id="ip-filter" class="filter" placeholder="filtrar por IP ou usuário" spellcheck="false">
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="ips-table">
+          <thead><tr><th>IP</th><th>Requisições</th><th>Erros 4xx</th><th>Logins ok / falhos</th><th>Usuários</th>
+            <th>Último acesso</th><th>Última requisição</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="ips-empty" hidden>Nenhum acesso no período.</p>
+    </section>
+
+    <section class="card">
+      <h2>Últimas ações</h2>
+      <div class="table-wrap">
+        <table class="table" id="hist-table">
+          <thead><tr><th>Quando</th><th>Ação</th><th>IP</th><th>Por</th><th>Resultado</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="hist-empty" hidden>Nenhuma ação manual ainda.</p>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Somente o Administrador Global acessa a tela de segurança.</p>
+      <a class="btn ghost" href="/home.html">Voltar ao início</a>
+    </section>
+  </main>
+</body>
+</html>

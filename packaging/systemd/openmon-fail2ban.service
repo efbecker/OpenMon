@@ -1,0 +1,20 @@
+# /etc/systemd/system/openmon-fail2ban.service
+# Aplica os bloqueios pedidos pela tela Segurança e publica o estado do Fail2ban
+# em /var/lib/openmon/fail2ban/status.json. A API só grava pedidos na fila;
+# quem fala com o fail2ban-client é este oneshot (root), que valida cada pedido.
+[Unit]
+Description=OpenMon sincroniza bloqueios com o Fail2ban
+After=fail2ban.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openmon/bin/openmon-fail2ban
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+TimeoutStartSec=120s

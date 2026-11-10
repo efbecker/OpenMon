@@ -1,0 +1,11 @@
+# /etc/systemd/system/openmon-fail2ban.path
+# Dispara a sincronização assim que a API grava um pedido (bloquear/desbloquear).
+[Unit]
+Description=OpenMon observa pedidos de bloqueio de IP
+
+[Path]
+DirectoryNotEmpty=/var/lib/openmon/fail2ban-requests
+Unit=openmon-fail2ban.service
+
+[Install]
+WantedBy=multi-user.target

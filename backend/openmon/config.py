@@ -37,3 +37,13 @@ def setup_done_file() -> Path:
 
 def admin_created() -> bool:
     return setup_done_file().is_file()
+
+
+def fail2ban_state_dir() -> Path:
+    """Estado publicado pelo openmon-fail2ban (root); a API só lê."""
+    return _path("OPENMON_F2B_STATE", str(state_dir() / "fail2ban"))
+
+
+def fail2ban_requests_dir() -> Path:
+    """Fila de pedidos de bloqueio/desbloqueio que a API grava."""
+    return _path("OPENMON_F2B_REQUESTS", str(state_dir() / "fail2ban-requests"))

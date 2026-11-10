@@ -74,7 +74,8 @@ atualizar, rode o mesmo comando.
 | 3. Deploy remoto do banco via SSH | ✅ [docs/03-deploy-banco-ssh.md](docs/03-deploy-banco-ssh.md) |
 | 4. Assistente web do deploy do banco (token de instalação, terminal ao vivo) | ✅ |
 | 5a. Primeiro administrador, login local (Argon2id, sessão, CSRF, bloqueio), página inicial | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md) |
-| 5b. Login AD/LDAP, RBAC nas telas, tenants, cofre | próximo |
+| 5b. Tela Segurança: acessos, IPs bloqueados, bloquear/desbloquear (Fail2ban) | ✅ [docs/04-login-e-sessoes.md](docs/04-login-e-sessoes.md#tela-segurança-fail2ban-só-na-vm-1) |
+| 5c. Login AD/LDAP, RBAC nas telas, tenants, cofre | próximo |
 | 6. Coletores vCenter, Hyper-V, Veeam e SNMP | — |
 | 7. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
 

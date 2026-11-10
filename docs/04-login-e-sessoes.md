@@ -59,3 +59,35 @@ ninguém. Autenticação usa o contexto de sistema (`system_transaction()`).
   TimescaleDB do container de e2e: deploy → administrador → login com senha
   errada → login → página inicial → logout; bloqueio após 5 erros conferido em
   `login_attempts`.
+
+## Tela Segurança (Fail2ban, só na VM 1)
+
+`/seguranca.html`, só para o Administrador Global (menu "Segurança"). Mostra:
+
+* estado do Fail2ban e IPs bloqueados agora: automáticos (jail `openmon-auth`, por
+  falhas de login no `auth.log`, 1 h com banimento progressivo) e manuais (jail
+  `openmon-manual`, até desbloquear), com data, validade, motivo e autor;
+* quem acessou nas últimas 24 h: requisições e erros do log do Apache
+  (`openmon_access.log`) somados às tentativas de login (`login_attempts`), com
+  usuários tentados e a última requisição; filtro por IP ou usuário;
+* botões Bloquear/Desbloquear por linha, formulário com motivo e histórico.
+
+O bloqueio vale só para 80/443 (o SSH continua acessível). O próprio IP do
+administrador, loopback e endereços inválidos são recusados.
+
+Como funciona sem dar privilégio à API:
+
+| Peça | Usuário | Papel |
+|---|---|---|
+| API (`/api/admin/security/*`) | `openmon` | Lê `/var/lib/openmon/fail2ban/status.json` e grava pedidos em `/var/lib/openmon/fail2ban-requests/` (0600, `O_EXCL`), com CSRF, auditoria e `auth.log` |
+| `openmon-fail2ban.path` | systemd | Dispara a ponte assim que chega um pedido |
+| `openmon-fail2ban.timer` | systemd | Atualiza o estado e reaplica os bloqueios manuais a cada minuto |
+| `/opt/openmon/bin/openmon-fail2ban` | root | Valida cada pedido (arquivo regular, ≤ 4 KB, sem symlink, ação em lista fechada, IP pelo `ipaddress`), chama o `fail2ban-client` sem shell e publica o estado (root:openmon 0640) |
+
+A lista de bloqueios manuais fica em `/var/lib/openmon/fail2ban/manual.json` e é
+reaplicada a cada minuto, então sobrevive a reinícios do Fail2ban. A VM 2 não tem
+Fail2ban (não fica exposta).
+
+Testado com Fail2ban 1.1 real (nftables): banimento automático a partir do
+`auth.log`, bloqueio e desbloqueio pela tela, reaplicação após reinício e
+pedidos maliciosos na fila (comando injetado, symlink, arquivo grande) ignorados.

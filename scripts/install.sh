@@ -246,10 +246,13 @@ for unit in "$APP_DIR"/packaging/systemd/*; do
     install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
 done
 systemctl daemon-reload
-install -m 0644 "$APP_DIR/packaging/fail2ban/filter.d/openmon-auth.conf" /etc/fail2ban/filter.d/openmon-auth.conf
+install -m 0644 "$APP_DIR"/packaging/fail2ban/filter.d/openmon-*.conf /etc/fail2ban/filter.d/
 install -m 0644 "$APP_DIR/packaging/fail2ban/jail.d/openmon.conf" /etc/fail2ban/jail.d/openmon.conf
 systemctl enable --quiet fail2ban
 systemctl restart fail2ban || warn "o Fail2ban não reiniciou; veja: journalctl -u fail2ban"
+# Tela Segurança: bloqueios manuais e estado do Fail2ban (ponte root, sem sudo na API)
+systemctl enable --now --quiet openmon-fail2ban.path openmon-fail2ban.timer
+systemctl start openmon-fail2ban.service || warn "openmon-fail2ban falhou; veja: journalctl -u openmon-fail2ban"
 
 # Token de instalação: libera o assistente web (deploy do banco + primeiro
 # administrador) até a instalação terminar, marcada por $STATE_DIR/setup.done

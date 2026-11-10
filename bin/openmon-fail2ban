@@ -1,0 +1,303 @@
+#!/usr/bin/python3 -I
+"""Ponte entre a tela de segurança do OpenMon e o Fail2ban (roda como root).
+
+A API (usuário openmon, sem privilégios) nunca chama o fail2ban-client. Ela só
+grava pedidos em /var/lib/openmon/fail2ban-requests/; este programa, disparado
+pelo openmon-fail2ban.path (na hora) e pelo openmon-fail2ban.timer (a cada
+minuto), faz o seguinte:
+
+1. valida e aplica os pedidos (bloquear/desbloquear IP);
+2. reaplica a lista de bloqueios manuais (jail openmon-manual, bantime -1), que
+   assim sobrevive a reinícios do Fail2ban;
+3. grava /var/lib/openmon/fail2ban/status.json com os IPs bloqueados, as
+   estatísticas das jails e o resumo de acessos do Apache nas últimas 24 h.
+
+Tudo o que vem da fila é tratado como não confiável: arquivo regular pequeno,
+JSON com ação em lista fechada e IP validado pelo módulo ipaddress. O
+fail2ban-client é chamado com lista de argumentos (sem shell).
+"""
+from __future__ import annotations
+
+import ipaddress
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
+
+REQ_DIR = Path(os.environ.get("OPENMON_F2B_REQUESTS", "/var/lib/openmon/fail2ban-requests"))
+STATE_DIR = Path(os.environ.get("OPENMON_F2B_STATE", "/var/lib/openmon/fail2ban"))
+ACCESS_LOGS = [Path(p) for p in os.environ.get(
+    "OPENMON_F2B_ACCESS_LOGS",
+    "/var/log/apache2/openmon_access.log.1:/var/log/apache2/openmon_access.log").split(":") if p]
+CLIENT = os.environ.get("OPENMON_F2B_CLIENT", "/usr/bin/fail2ban-client")
+SERVICE_GROUP = os.environ.get("OPENMON_F2B_GROUP", "openmon")
+
+AUTO_JAIL = "openmon-auth"
+MANUAL_JAIL = "openmon-manual"
+JAILS = (AUTO_JAIL, MANUAL_JAIL)
+MAX_REQUEST_BYTES = 4096
+MAX_MANUAL = 5000
+MAX_ACCESS_LINES = 500_000
+TOP_IPS = 300
+ACCESS_WINDOW_S = 24 * 3600
+
+_LOG_RE = re.compile(
+    r'^(?P<ip>[0-9A-Fa-f.:]+) \S+ (?P<user>\S+) \[(?P<ts>[^\]]+)\] "(?P<req>[^"]*)" (?P<status>\d{3}) \S+'
+    r'(?: "(?P<ref>[^"]*)" "(?P<ua>[^"]*)")?')
+_BANIP_RE = re.compile(r"^(?P<ip>\S+)\s+(?P<start>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \+ (?P<bantime>-?\d+) = "
+                       r"(?P<end>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)")
+
+
+def utc_iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def valid_ip(value: object) -> str | None:
+    if not isinstance(value, str) or len(value) > 64:
+        return None
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    if ip.is_loopback or ip.is_unspecified or ip.is_multicast:
+        return None
+    return str(ip)
+
+
+def clean_text(value: object, limit: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(ch for ch in value if ch.isprintable())[:limit]
+
+
+# -----------------------------------------------------------------------------
+# fail2ban-client
+# -----------------------------------------------------------------------------
+def f2b(*args: str) -> tuple[int, str]:
+    try:
+        proc = subprocess.run([CLIENT, *args], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 255, str(exc)
+    return proc.returncode, proc.stdout
+
+
+def jail_bans(jail: str) -> list[dict]:
+    rc, out = f2b("get", jail, "banip", "--with-time")
+    if rc != 0:
+        return []
+    bans = []
+    for line in out.splitlines():
+        m = _BANIP_RE.match(line.strip())
+        if not m:
+            continue
+        start = time.mktime(time.strptime(m["start"], "%Y-%m-%d %H:%M:%S"))
+        bantime = int(m["bantime"])
+        bans.append({"ip": m["ip"], "jail": jail, "banned_at": utc_iso(start),
+                     "expires_at": None if bantime < 0 else utc_iso(start + bantime),
+                     "permanent": bantime < 0})
+    return bans
+
+
+def jail_stats(jail: str) -> dict | None:
+    rc, out = f2b("status", jail)
+    if rc != 0:
+        return None
+    stats = {}
+    for key, label in (("currently_failed", "Currently failed"), ("total_failed", "Total failed"),
+                       ("currently_banned", "Currently banned"), ("total_banned", "Total banned")):
+        m = re.search(rf"{label}:\s*(\d+)", out)
+        stats[key] = int(m.group(1)) if m else 0
+    return stats
+
+
+# -----------------------------------------------------------------------------
+# Estado (arquivos do root, legíveis pelo grupo openmon)
+# -----------------------------------------------------------------------------
+def write_json(path: Path, data: object) -> None:
+    STATE_DIR.mkdir(mode=0o750, parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, separators=(",", ":"))
+        if os.geteuid() == 0:
+            try:
+                import grp
+                os.chown(tmp, 0, grp.getgrnam(SERVICE_GROUP).gr_gid)
+            except KeyError:
+                pass
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def read_json(path: Path, default):
+    try:
+        with path.open(encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def load_manual() -> dict[str, dict]:
+    data = read_json(STATE_DIR / "manual.json", {})
+    out = {}
+    for ip, meta in (data.items() if isinstance(data, dict) else []):
+        ip_ok = valid_ip(ip)
+        if ip_ok and isinstance(meta, dict):
+            out[ip_ok] = meta
+    return out
+
+
+# -----------------------------------------------------------------------------
+# Fila de pedidos (escrita pela API, não confiável)
+# -----------------------------------------------------------------------------
+def read_request(path: Path) -> dict | None:
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_REQUEST_BYTES:
+            return None
+        raw = os.read(fd, MAX_REQUEST_BYTES)
+    finally:
+        os.close(fd)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def process_requests(manual: dict[str, dict], history: list[dict]) -> None:
+    if not REQ_DIR.is_dir():
+        return
+    for path in sorted(REQ_DIR.iterdir()):
+        if path.name.startswith(".") or not path.name.endswith(".json"):
+            continue
+        req = read_request(path)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        if req is None:
+            continue
+        action, ip = req.get("action"), valid_ip(req.get("ip"))
+        entry = {"at": utc_iso(time.time()), "action": action if action in ("ban", "unban") else "inválida", "ip": ip,
+                 "by": clean_text(req.get("by"), 64), "ok": False}
+        if action not in ("ban", "unban") or ip is None:
+            entry["error"] = "pedido inválido"
+        elif action == "ban":
+            if len(manual) >= MAX_MANUAL and ip not in manual:
+                entry["error"] = "limite de bloqueios manuais atingido"
+            else:
+                manual[ip] = {"by": entry["by"], "reason": clean_text(req.get("reason"), 200),
+                              "at": entry["at"]}
+                rc, _ = f2b("set", MANUAL_JAIL, "banip", ip)
+                entry["ok"] = rc == 0
+                if rc != 0:
+                    entry["error"] = "fail2ban-client falhou"
+        else:
+            manual.pop(ip, None)
+            rc, _ = f2b("unban", ip)  # tira de todas as jails
+            entry["ok"] = rc == 0
+            if rc != 0:
+                entry["error"] = "fail2ban-client falhou"
+        history.insert(0, entry)
+    del history[50:]
+
+
+def reapply_manual(manual: dict[str, dict], banned_manual: set[str]) -> None:
+    missing = [ip for ip in manual if ip not in banned_manual]
+    for i in range(0, len(missing), 200):
+        f2b("set", MANUAL_JAIL, "banip", *missing[i:i + 200])
+
+
+# -----------------------------------------------------------------------------
+# Acessos (log do Apache do OpenMon)
+# -----------------------------------------------------------------------------
+def access_summary(now: float) -> list[dict]:
+    lines: deque[str] = deque(maxlen=MAX_ACCESS_LINES)
+    for log in ACCESS_LOGS:
+        try:
+            with log.open(encoding="utf-8", errors="replace") as fh:
+                lines.extend(fh)
+        except OSError:
+            continue
+    per_ip: dict[str, dict] = {}
+    for line in lines:
+        m = _LOG_RE.match(line)
+        if not m:
+            continue
+        try:
+            ts = datetime.strptime(m["ts"], "%d/%b/%Y:%H:%M:%S %z").timestamp()
+        except ValueError:
+            continue
+        if now - ts > ACCESS_WINDOW_S:
+            continue
+        ip = m["ip"]
+        row = per_ip.get(ip)
+        if row is None:
+            row = per_ip[ip] = {"ip": ip, "requests": 0, "errors_4xx": 0, "errors_5xx": 0,
+                                "first_seen": ts, "last_seen": ts, "last_request": "", "user_agent": ""}
+        row["requests"] += 1
+        status = int(m["status"])
+        if 400 <= status < 500:
+            row["errors_4xx"] += 1
+        elif status >= 500:
+            row["errors_5xx"] += 1
+        row["first_seen"] = min(row["first_seen"], ts)
+        if ts >= row["last_seen"]:
+            row["last_seen"] = ts
+            row["last_request"] = clean_text(m["req"], 160)
+            row["user_agent"] = clean_text(m["ua"] or "", 160)
+    rows = sorted(per_ip.values(), key=lambda r: r["requests"], reverse=True)[:TOP_IPS]
+    for r in rows:
+        r["first_seen"], r["last_seen"] = utc_iso(r["first_seen"]), utc_iso(r["last_seen"])
+    return rows
+
+
+# -----------------------------------------------------------------------------
+def main() -> int:
+    now = time.time()
+    previous = read_json(STATE_DIR / "status.json", {})
+    history = previous.get("history", []) if isinstance(previous, dict) else []
+    manual = load_manual()
+
+    process_requests(manual, history)
+    write_json(STATE_DIR / "manual.json", manual)
+
+    rc, _ = f2b("ping")
+    running = rc == 0
+    bans: list[dict] = []
+    stats: dict[str, dict | None] = {}
+    if running:
+        reapply_manual(manual, {b["ip"] for b in jail_bans(MANUAL_JAIL)})
+        for jail in JAILS:
+            bans += jail_bans(jail)
+            stats[jail] = jail_stats(jail)
+    for b in bans:
+        meta = manual.get(b["ip"]) if b["jail"] == MANUAL_JAIL else None
+        if meta:
+            b.update(by=meta.get("by", ""), reason=meta.get("reason", ""))
+
+    write_json(STATE_DIR / "status.json", {
+        "updated_at": utc_iso(now), "fail2ban_running": running, "jails": stats,
+        "bans": bans, "manual": [{"ip": ip, **meta} for ip, meta in manual.items()],
+        "access": access_summary(now), "access_window_hours": ACCESS_WINDOW_S // 3600,
+        "history": history,
+    })
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

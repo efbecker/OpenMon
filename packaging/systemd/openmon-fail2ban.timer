@@ -1,0 +1,12 @@
+# /etc/systemd/system/openmon-fail2ban.timer
+# Atualiza a tela Segurança (bloqueios e acessos) e reaplica os bloqueios manuais.
+[Unit]
+Description=OpenMon atualiza o estado do Fail2ban a cada minuto
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
