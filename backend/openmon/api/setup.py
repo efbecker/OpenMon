@@ -342,7 +342,7 @@ async def create_admin(form: AdminForm, request: Request) -> dict[str, Any]:
     try:
         password_hash = await asyncio.to_thread(security.hash_password, password)
     except RuntimeError as exc:  # python3-argon2 ausente
-        raise HTTPException(500, f"Não foi possível gerar o hash da senha: {exc}.") from exc
+        raise HTTPException(503, f"Não foi possível gerar o hash da senha: {exc}.") from exc
     try:
         user_id = await create_first_admin(form, password_hash, security.inet_or_none(ip),
                                            security.user_agent(request))

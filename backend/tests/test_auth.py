@@ -110,3 +110,18 @@ def test_password_hash_and_rehash():
     assert security.verify_password(h, PASSWORD) == (True, None)
     assert security.verify_password(h, "outra")[0] is False
     assert security.verify_password("$2b$12$abc", PASSWORD)[0] is False
+
+
+def test_argon2_cffi_21_1_without_invalidhasherror(monkeypatch):
+    """Debian 13 traz argon2-cffi 21.1, que só tem InvalidHash (InvalidHashError é da 21.2+)."""
+    import importlib
+
+    import argon2.exceptions as exc
+    monkeypatch.delattr(exc, "InvalidHashError", raising=False)
+    mod = importlib.reload(security)
+    try:
+        assert mod._hasher is not None and mod.InvalidHashError is exc.InvalidHash
+        assert mod.verify_password(mod.hash_password(PASSWORD), PASSWORD)[0]
+    finally:
+        monkeypatch.undo()
+        importlib.reload(security)

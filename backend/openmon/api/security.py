@@ -8,11 +8,17 @@ import secrets
 
 from fastapi import Request
 
+_ARGON2_IMPORT_ERROR = ""
 try:
     from argon2 import PasswordHasher  # type: ignore
-    from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError  # type: ignore
-except ImportError:  # pragma: no cover - python3-argon2 é dependência obrigatória
+    from argon2 import exceptions as _argon2_exc  # type: ignore
+    # argon2-cffi 21.1 (Debian 13) só tem InvalidHash; InvalidHashError surgiu na 21.2
+    InvalidHashError = getattr(_argon2_exc, "InvalidHashError", None) or _argon2_exc.InvalidHash
+    VerificationError = _argon2_exc.VerificationError
+    VerifyMismatchError = _argon2_exc.VerifyMismatchError
+except (ImportError, AttributeError) as _exc:  # pragma: no cover - python3-argon2 é obrigatório
     PasswordHasher = None  # type: ignore
+    _ARGON2_IMPORT_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 PASSWORD_MIN = 12
 PASSWORD_MAX = 256
@@ -25,7 +31,7 @@ _DUMMY_HASH = _hasher.hash(secrets.token_urlsafe(16)) if _hasher else ""
 
 def _require_hasher() -> PasswordHasher:
     if _hasher is None:
-        raise RuntimeError("python3-argon2 não está instalado")
+        raise RuntimeError("biblioteca Argon2 indisponível (pacote python3-argon2): " + _ARGON2_IMPORT_ERROR)
     return _hasher
 
 
