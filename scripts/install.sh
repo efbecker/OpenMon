@@ -5,9 +5,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/efbecker/OpenMon/main/scripts/install.sh | sudo bash
 #
-# Já fazendo o deploy do banco na VM 2 (via SSH, a partir desta VM):
-#
-#   curl -fsSL .../install.sh | sudo bash -s -- --db-host 10.10.0.20 --db-ssh-user admin
+# O deploy do banco (VM 2) é feito depois, pela interface web
+# (https://<VM 1>/), usando o token de instalação mostrado no final.
 #
 # Repositório privado: gere um token de leitura no GitHub e passe-o pelo
 # ambiente (nunca na URL):
@@ -17,16 +16,11 @@
 #     | sudo GITHUB_TOKEN="$TOKEN" bash
 #
 # Opções (também aceitas como variáveis de ambiente OPENMON_*):
-#   --db-host HOST          IP/DNS da VM 2: faz o deploy do PostgreSQL + TimescaleDB via SSH
-#   --db-ssh-user USER      usuário SSH da VM 2 (padrão: root)
-#   --db-ssh-port N         porta SSH da VM 2 (padrão: 22)
-#   --db-ssh-key ARQ        chave privada SSH (senão, pede a senha)
-#   --db-fingerprint FP     impressão digital SSH esperada (SHA256:...), para rodar sem perguntas
-#   --ssh-allow CIDR        restringe o SSH da VM 2 a este CIDR (a VM 1 é sempre liberada)
 #   --fqdn NOME             nome do site no Apache (padrão: hostname -f)
 #   --admin-cidr CIDR       ativa o nftables da VM 1 liberando SSH só para este CIDR
+#   --db-ip IP              IP da VM 2, para o nftables da VM 1 limitar a saída até ela
+#   --new-setup-token       gera um novo token de instalação (refazer o deploy do banco)
 #   --ref REF               branch/tag/commit do GitHub (padrão: main)
-#   --skip-db               não perguntar pelo deploy do banco
 # =============================================================================
 set -Eeuo pipefail
 umask 022
@@ -40,30 +34,20 @@ LOG_DIR="/var/log/openmon"
 BACKUP_DIR="/var/backups/openmon"
 
 REF="${OPENMON_REF:-main}"
-DB_HOST="${OPENMON_DB_HOST:-}"
-DB_SSH_USER="${OPENMON_DB_SSH_USER:-root}"
-DB_SSH_PORT="${OPENMON_DB_SSH_PORT:-22}"
-DB_SSH_KEY="${OPENMON_DB_SSH_KEY:-}"
-DB_FINGERPRINT="${OPENMON_DB_FINGERPRINT:-}"
-SSH_ALLOW="${OPENMON_SSH_ALLOW:-}"
+DB_IP="${OPENMON_DB_IP:-}"
 FQDN="${OPENMON_FQDN:-}"
 ADMIN_CIDR="${OPENMON_ADMIN_CIDR:-}"
-SKIP_DB="${OPENMON_SKIP_DB:-0}"
+NEW_SETUP_TOKEN="${OPENMON_NEW_SETUP_TOKEN:-0}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --db-host) DB_HOST="$2"; shift ;;
-        --db-ssh-user) DB_SSH_USER="$2"; shift ;;
-        --db-ssh-port) DB_SSH_PORT="$2"; shift ;;
-        --db-ssh-key) DB_SSH_KEY="$2"; shift ;;
-        --db-fingerprint) DB_FINGERPRINT="$2"; shift ;;
-        --ssh-allow) SSH_ALLOW="$2"; shift ;;
+        --db-ip) DB_IP="$2"; shift ;;
         --fqdn) FQDN="$2"; shift ;;
         --admin-cidr) ADMIN_CIDR="$2"; shift ;;
         --ref) REF="$2"; shift ;;
-        --skip-db) SKIP_DB=1 ;;
-        -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
+        --new-setup-token) NEW_SETUP_TOKEN=1 ;;
+        -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
         *) echo "opção desconhecida: $1" >&2; exit 2 ;;
     esac
     shift
@@ -79,17 +63,6 @@ ok()   { echo -e "${C_G}[OK]${C_0} $*"; }
 warn() { echo -e "${C_Y}[AVISO]${C_0} $*"; }
 die()  { echo -e "${C_R}[ERRO]${C_0} $*" >&2; exit 1; }
 trap 'die "falha na linha $LINENO: $BASH_COMMAND"' ERR
-
-# Responde perguntas pelo terminal mesmo com "curl | bash" (stdin é o script)
-have_tty() { [ -r /dev/tty ] && [ -w /dev/tty ] && { : < /dev/tty; } 2>/dev/null; }
-ask() {  # ask "pergunta" padrão -> imprime a resposta
-    local answer=""
-    if have_tty; then
-        printf '%s ' "$1" > /dev/tty
-        IFS= read -r answer < /dev/tty || true
-    fi
-    printf '%s' "${answer:-$2}"
-}
 
 echo -e "${C_C}"
 echo "=========================================================================="
@@ -119,10 +92,11 @@ APT_OPTS=(-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-co
 CORE=(
     ca-certificates curl openssl sudo chrony nftables fail2ban logrotate zstd tar iproute2
     apache2 python3 python3-venv python3-paramiko python3-psycopg postgresql-client
+    python3-fastapi python3-uvicorn python3-pydantic
 )
 # Usados pela API e pelos coletores: instalados se existirem no repositório
 APP=(
-    python3-fastapi python3-uvicorn python3-pydantic python3-multipart python3-jinja2
+    python3-multipart python3-jinja2
     python3-asyncpg python3-cryptography python3-argon2 python3-bcrypt python3-jwt python3-ldap3
     python3-httpx python3-winrm python3-requests-ntlm python3-pyvmomi python3-systemd
     snmp unattended-upgrades
@@ -145,7 +119,8 @@ if ! id openmon >/dev/null 2>&1; then
 fi
 install -d -m 0755 -o root -g root "$APP_DIR" "$APP_DIR/bin" "$WEB_DIR"
 install -d -m 0750 -o root -g openmon "$CONF_DIR" "$CONF_DIR/ssh"
-install -d -m 0755 -o root -g root "$CONF_DIR/pki"
+# Único ponto de /etc gravável pela API (configuração gerada pelo deploy do banco)
+install -d -m 0750 -o openmon -g openmon "$CONF_DIR/database"
 install -d -m 0750 -o openmon -g openmon "$STATE_DIR" "$STATE_DIR/spool" "$STATE_DIR/reports"
 install -d -m 0750 -o openmon -g adm "$LOG_DIR"
 install -d -m 0700 -o openmon -g openmon "$BACKUP_DIR"
@@ -222,7 +197,7 @@ if [ ! -f "$CONF_DIR/openmon.conf" ]; then
 [app]
 base_url = https://${FQDN:-$(hostname -f 2>/dev/null || hostname)}
 master_key_file = ${CONF_DIR}/master.key
-database_config = ${CONF_DIR}/database.conf
+database_config = ${CONF_DIR}/database/database.conf
 log_dir = ${LOG_DIR}
 
 [security]
@@ -251,13 +226,12 @@ fi
 sed "s|^Define OPENMON_FQDN .*|Define OPENMON_FQDN ${FQDN}|" \
     "$APP_DIR/packaging/apache2/openmon.conf" > /etc/apache2/sites-available/openmon.conf
 install -m 0644 "$APP_DIR/packaging/apache2/openmon-security.conf" /etc/apache2/conf-available/openmon-security.conf
-if [ ! -f "$WEB_DIR/index.html" ]; then
-    cat > "$WEB_DIR/index.html" <<'EOF'
-<!doctype html>
-<html lang="pt-BR"><head><meta charset="utf-8"><title>OpenMon</title></head>
-<body><h1>OpenMon</h1><p>Instalação base concluída. A interface web será publicada nas próximas versões.</p></body></html>
-EOF
-fi
+# Interface web (estáticos). __VERSION__ força o navegador a buscar os assets novos.
+find "$WEB_DIR" -mindepth 1 -delete
+cp -r "$SRC/frontend/public/." "$WEB_DIR/"
+sed -i "s/__VERSION__/${COMMIT:-$REF}/g" "$WEB_DIR/index.html"
+chown -R root:root "$WEB_DIR"
+chmod -R u=rwX,go=rX "$WEB_DIR"
 a2enmod -q ssl headers proxy proxy_http proxy_wstunnel rewrite http2 >/dev/null
 a2enconf -q openmon-security >/dev/null
 a2dissite -q 000-default >/dev/null 2>&1 || true
@@ -281,10 +255,29 @@ install -m 0644 "$APP_DIR/packaging/fail2ban/jail.d/openmon.conf" /etc/fail2ban/
 systemctl enable --quiet fail2ban
 systemctl restart fail2ban || warn "o Fail2ban não reiniciou; veja: journalctl -u fail2ban"
 
+# Token de instalação: libera o assistente web até o banco ser provisionado
+SETUP_TOKEN=""
+if [ "$NEW_SETUP_TOKEN" = "1" ] || [ ! -s "$CONF_DIR/database/database.conf" ]; then
+    if [ "$NEW_SETUP_TOKEN" = "1" ] || [ ! -s "$STATE_DIR/setup.token" ]; then
+        openssl rand -hex 24 > "$STATE_DIR/setup.token.new"
+        chown openmon:openmon "$STATE_DIR/setup.token.new"
+        chmod 0600 "$STATE_DIR/setup.token.new"
+        mv -f "$STATE_DIR/setup.token.new" "$STATE_DIR/setup.token"
+    fi
+    SETUP_TOKEN="$(cat "$STATE_DIR/setup.token")"
+fi
+
 # Só ativa os serviços cujos módulos já existem nesta versão
 has_module() { PYTHONPATH="$APP_DIR/app" python3 -c "import importlib.util, sys; sys.exit(importlib.util.find_spec('$1') is None)" 2>/dev/null; }
 PENDING=()
-if has_module openmon.api.main; then systemctl enable --now --quiet openmon-api.service; else PENDING+=(openmon-api); fi
+if has_module openmon.api.main; then
+    systemctl enable --quiet openmon-api.service
+    systemctl restart openmon-api.service
+    for _ in $(seq 1 20); do [ -S /run/openmon/api.sock ] && break; sleep 0.5; done
+    [ -S /run/openmon/api.sock ] || warn "a API não subiu; veja: journalctl -u openmon-api -n 50"
+else
+    PENDING+=(openmon-api)
+fi
 if has_module openmon.scheduler; then systemctl enable --now --quiet openmon-scheduler.service; else PENDING+=(openmon-scheduler); fi
 if has_module openmon.collector; then
     for c in vmware hyperv veeam snmp; do systemctl enable --now --quiet "openmon-collector@${c}.service"; done
@@ -305,7 +298,7 @@ step "Firewall nftables da VM 1"
 if [ -n "$ADMIN_CIDR" ]; then
     [[ "$ADMIN_CIDR" =~ ^[0-9.]+/[0-9]{1,2}$ ]] || die "--admin-cidr deve ser um CIDR IPv4 (ex.: 10.10.0.0/24)"
     install -d -m 0755 /etc/nftables.d
-    DB_SET="${DB_HOST:-}"
+    DB_SET="${DB_IP:-}"
     {
         sed -e "s|elements = { 10.10.0.0/24 }|elements = { ${ADMIN_CIDR} }|" "$APP_DIR/packaging/nftables/vm1-frontend.nft" |
         if [[ "$DB_SET" =~ ^[0-9.]+$ ]]; then sed "s|elements = { 10.10.0.20 }|elements = { ${DB_SET} }|"; else sed '/set db_v4 {/,/^    }/d; /@db_v4/d'; fi
@@ -323,48 +316,20 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-DB_DONE=0
-if [ -z "$DB_HOST" ] && [ "$SKIP_DB" != "1" ] && [ ! -s "$CONF_DIR/database.conf" ] && have_tty; then
-    DB_HOST="$(ask "IP da VM 2 (banco) para fazer o deploy agora via SSH [Enter para pular]:" "")"
-    if [ -n "$DB_HOST" ]; then
-        DB_SSH_USER="$(ask "Usuário SSH da VM 2 [$DB_SSH_USER]:" "$DB_SSH_USER")"
-    fi
-fi
-if [ -n "$DB_HOST" ] && [ "$SKIP_DB" != "1" ]; then
-    step "Deploy do banco na VM 2 (${DB_SSH_USER}@${DB_HOST}) via SSH"
-    DB_IP="$DB_HOST"
-    if ! [[ "$DB_IP" =~ ^[0-9.]+$ ]]; then
-        DB_IP="$(getent ahostsv4 "$DB_HOST" | awk 'NR==1 {print $1}')"
-        [ -n "$DB_IP" ] || die "não foi possível resolver $DB_HOST"
-    fi
-    FRONTEND_IP="$(ip -o route get "$DB_IP" 2>/dev/null | sed -n 's/.* src \([^ ]*\).*/\1/p')"
-    [ -n "$FRONTEND_IP" ] || die "sem rota desta VM até $DB_IP"
-    echo "IP desta VM visto pela VM 2: $FRONTEND_IP"
-    DEPLOY_ARGS=(--db-host "$DB_HOST" --ssh-port "$DB_SSH_PORT" --ssh-user "$DB_SSH_USER"
-                 --frontend-address "$FRONTEND_IP" --config-dir "$CONF_DIR")
-    [ -n "$DB_SSH_KEY" ] && DEPLOY_ARGS+=(--ssh-key "$DB_SSH_KEY")
-    [ -n "$DB_FINGERPRINT" ] && DEPLOY_ARGS+=(--fingerprint "$DB_FINGERPRINT")
-    [ -n "$SSH_ALLOW" ] && DEPLOY_ARGS+=(--ssh-allow "$SSH_ALLOW")
-    have_tty || [ -n "$DB_FINGERPRINT" ] || die "sem terminal para confirmar a chave SSH: passe --db-fingerprint SHA256:..."
-    if have_tty; then
-        PYTHONPATH="$APP_DIR/app" python3 -m openmon.deploy "${DEPLOY_ARGS[@]}" < /dev/tty || die "deploy do banco falhou (veja as mensagens acima)"
-    else
-        PYTHONPATH="$APP_DIR/app" python3 -m openmon.deploy "${DEPLOY_ARGS[@]}" < /dev/null || die "deploy do banco falhou (veja as mensagens acima)"
-    fi
-    DB_DONE=1
-fi
-
-# -----------------------------------------------------------------------------
 echo -e "\n${C_G}==========================================================================${C_0}"
 echo -e "${C_G} OpenMon ${VERSION:-} instalado na VM 1${C_0}"
 echo -e "${C_G}==========================================================================${C_0}"
 echo -e " Web:        ${C_C}https://${FQDN}/${C_0}  (ou https://${PRIMARY_IP:-<ip>}/)"
 echo -e " Código:     $APP_DIR/app   Configuração: $CONF_DIR   Logs: $LOG_DIR"
-if [ "$DB_DONE" = "1" ] || [ -s "$CONF_DIR/database.conf" ]; then
-    echo -e " Banco:      configurado em $CONF_DIR/database.conf (TLS verify-full)"
+if [ -s "$CONF_DIR/database/database.conf" ] && [ -z "$SETUP_TOKEN" ]; then
+    echo -e " Banco:      provisionado ($CONF_DIR/database/database.conf, TLS verify-full)"
 else
-    echo -e " Banco:      ainda não provisionado. Na VM 2 basta Debian 13 + SSH; depois rode nesta VM:"
-    echo -e "             ${C_C}curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh | sudo bash -s -- --db-host <IP_DA_VM2> --db-ssh-user <usuario>${C_0}"
+    echo ""
+    echo -e " ${C_Y}Próximo passo: deploy do banco (VM 2) pela interface web${C_0}"
+    echo -e "   1. Abra ${C_C}https://${PRIMARY_IP:-$FQDN}/${C_0} (certificado autoassinado: aceite o aviso)"
+    echo -e "   2. Token de instalação: ${C_G}${SETUP_TOKEN}${C_0}"
+    echo -e "      (também em $STATE_DIR/setup.token; vale até o deploy terminar com sucesso)"
+    echo -e "   3. Na VM 2 basta Debian 13 com SSH e um usuário com sudo."
 fi
 echo -e " Atualizar:  rode o mesmo comando curl de novo (configuração e dados são mantidos)."
 echo ""

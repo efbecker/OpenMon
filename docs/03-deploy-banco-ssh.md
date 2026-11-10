@@ -68,18 +68,34 @@ Ajustes manuais vão em `conf.d/99-local.conf`, que o deploy não sobrescreve.
 
 ## Uso
 
-Pelo instalador, numa VM 1 recém-instalada (faz a VM 1 e já dispara este deploy):
+### Pela interface web (padrão)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/efbecker/OpenMon/main/scripts/install.sh \
-  | sudo bash -s -- --db-host 10.10.0.20 --db-ssh-user admin
-```
+Depois do `curl ... | sudo bash` na VM 1, abra `https://IP_DA_VM1/`:
 
-O instalador descobre sozinho o IP de saída da VM 1 até a VM 2 (`ip route get`)
-e o usa em `--frontend-address`. As perguntas (impressão digital, senhas) vão
-pelo terminal (`/dev/tty`), então funcionam mesmo com `curl | bash`.
+1. **Token de instalação**: impresso no fim do instalador e em
+   `/var/lib/openmon/setup.token`. Enquanto não há banco nem usuários, ele é a
+   única chave do assistente: vai no cabeçalho `X-Setup-Token` (sem cookie, então
+   sem CSRF), é comparado em tempo constante, tem rate limit por IP (10 erros em
+   15 min) e cada erro vai para `/var/log/openmon/auth.log` (Fail2ban). É apagado
+   quando o deploy termina com sucesso.
+2. **Formulário** igual ao do OpenFlow: IP e porta SSH do Servidor 2, usuário com
+   sudo, senha e IP do Servidor 1 (preenchido sozinho pela rota até a VM 2).
+   Em "Opções avançadas": senha do sudo diferente e CIDR para restringir o SSH.
+3. **Testar Conexão SSH**: primeiro só lê a chave do host (nenhum segredo é
+   enviado) e mostra a impressão digital; ao confirmar, autentica e mostra SO,
+   CPU, RAM, disco e tipo de sudo. Mudar IP, porta ou usuário invalida o teste.
+4. **Fazer Deploy**: barra de progresso pelas etapas e terminal ao vivo
+   (polling de `GET /api/setup/database/deploy?since=N`). A senha é apagada do
+   formulário assim que o deploy começa e nunca volta para o navegador.
 
-Pela CLI (o assistente web vai usar o mesmo motor):
+Rotas (`openmon/api/setup.py`): `GET /api/setup/status`, `POST /api/setup/token/verify`,
+`POST /api/setup/database/frontend-ip`, `POST /api/setup/database/ssh-test`,
+`POST /api/setup/database/deploy`, `GET /api/setup/database/deploy`.
+
+A configuração gerada vai para `/etc/openmon/database/` (dono `openmon`, 0600),
+o único ponto de `/etc` gravável pelo serviço (`ReadWritePaths` na unit).
+
+### Pela CLI (mesmo motor, útil para automação):
 
 ```bash
 sudo PYTHONPATH=/opt/openmon/app python3 -m openmon.deploy \

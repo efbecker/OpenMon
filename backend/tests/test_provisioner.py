@@ -155,7 +155,7 @@ def test_full_flow_with_fake_session(monkeypatch, tmp_path):
     assert "SCRAM-SHA-256$4096:" in files["roles.sql"].decode()
 
     conf = (tmp_path / "etc" / "database.conf")
-    assert conf.stat().st_mode & 0o777 in (0o640, 0o600)
+    assert conf.stat().st_mode & 0o777 == 0o600
     assert f"password = {result.app_password}" in conf.read_text()
     assert "sslmode = verify-full" in conf.read_text()
     assert (tmp_path / "etc" / "database-owner.conf").stat().st_mode & 0o777 == 0o600

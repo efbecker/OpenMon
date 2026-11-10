@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Deploy do banco</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/setup.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+    </div>
+    <div class="topbar-right">
+      <span class="pill" id="version-pill">instalação</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="card hero">
+      <div class="hero-text">
+        <span class="badge">Assistente de instalação · Zero intervenção manual</span>
+        <h1>Deploy do Banco de Dados (Servidor 2 — TimescaleDB)</h1>
+        <p>Informe o endereço e as credenciais SSH do Servidor 2 (Debian 13 ou superior). O OpenMon instala
+          remotamente o PostgreSQL 17 e o TimescaleDB dos repositórios oficiais, aplica o tuning pelo hardware,
+          cria o schema com hypertables, continuous aggregates e retenção de 5 anos, ativa TLS e libera o
+          banco só para este servidor no pg_hba e no nftables.</p>
+      </div>
+      <div class="hero-side">
+        <strong>Segurança de credenciais</strong>
+        <span class="ok-text">Usadas só durante o deploy · nunca gravadas</span>
+        <span class="muted small">Chave SSH do Servidor 2 conferida antes do envio da senha</span>
+      </div>
+    </section>
+
+    <!-- Token de instalação -->
+    <section class="card" id="token-card" hidden>
+      <h2>Token de instalação</h2>
+      <p class="muted">O token foi exibido no final do instalador (curl). Ele também está no Servidor 1 em
+        <code>/var/lib/openmon/setup.token</code> (<code>sudo cat /var/lib/openmon/setup.token</code>).</p>
+      <form id="token-form" class="row" autocomplete="off">
+        <input id="token-input" type="password" placeholder="cole o token aqui" required spellcheck="false">
+        <button type="submit" class="btn primary">Liberar assistente</button>
+      </form>
+      <p class="error-text" id="token-error" hidden></p>
+    </section>
+
+    <!-- Assistente encerrado -->
+    <section class="card" id="closed-card" hidden>
+      <h2 id="closed-title">Banco de dados já provisionado</h2>
+      <p class="muted" id="closed-text">O assistente de instalação foi encerrado. Para refazer o deploy, rode o
+        instalador novamente no Servidor 1 com <code>--new-setup-token</code>.</p>
+    </section>
+
+    <!-- Formulário -->
+    <section class="card" id="deploy-card" hidden>
+      <form id="deploy-form" autocomplete="off" novalidate>
+        <div class="grid">
+          <label class="field wide">
+            <span class="label">IP do Servidor 2 (banco de dados)</span>
+            <input id="host" name="host" required placeholder="192.168.122.125" spellcheck="false">
+          </label>
+          <label class="field">
+            <span class="label">Porta SSH</span>
+            <input id="port" name="port" type="number" min="1" max="65535" value="22" required>
+          </label>
+          <label class="field wide">
+            <span class="label">Usuário SSH (com sudo)</span>
+            <input id="username" name="username" required placeholder="admin" spellcheck="false" autocapitalize="off">
+          </label>
+          <label class="field">
+            <span class="label">Senha SSH</span>
+            <input id="password" name="password" type="password" required autocomplete="new-password">
+          </label>
+          <label class="field full">
+            <span class="label">IP do Servidor 1 (liberação exclusiva no firewall e no pg_hba.conf)</span>
+            <input id="frontend" name="frontend" required placeholder="detectado automaticamente" spellcheck="false">
+          </label>
+        </div>
+
+        <details class="advanced">
+          <summary>Opções avançadas</summary>
+          <div class="grid">
+            <label class="field wide">
+              <span class="label">Senha do sudo (se for diferente da senha SSH)</span>
+              <input id="sudo-password" type="password" autocomplete="new-password">
+            </label>
+            <label class="field">
+              <span class="label">Restringir SSH do Servidor 2 a (CIDR)</span>
+              <input id="ssh-allow" placeholder="ex.: 10.10.0.0/24" spellcheck="false">
+            </label>
+          </div>
+        </details>
+
+        <div class="note" id="root-note" hidden>
+          O Debian não aceita login SSH do <code>root</code> por senha por padrão. Prefira um usuário com sudo.
+        </div>
+
+        <div class="fingerprint" id="fp-box" hidden>
+          <div>
+            <span class="label">Chave SSH apresentada pelo Servidor 2</span>
+            <div class="fp"><span id="fp-type"></span> <code id="fp-value"></code></div>
+            <p class="muted small">Confira no Servidor 2: <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>.
+              Se não conferir, não continue.</p>
+          </div>
+          <button type="button" class="btn primary" id="fp-confirm">A chave confere · testar login</button>
+        </div>
+
+        <div class="probe" id="probe-box" hidden>
+          <span class="ok-text" id="probe-title">Conexão SSH verificada</span>
+          <dl id="probe-list"></dl>
+        </div>
+
+        <p class="error-text" id="form-error" hidden></p>
+
+        <div class="actions">
+          <button type="button" class="btn ghost" id="btn-test">▷ Testar Conexão SSH</button>
+          <button type="submit" class="btn deploy" id="btn-deploy" disabled>Fazer Deploy do Banco de Dados no Servidor 2</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Progresso + terminal -->
+    <section class="card terminal-card" id="terminal-card" hidden>
+      <div class="progress" id="progress" hidden>
+        <div class="progress-head">
+          <span id="progress-step">Preparando…</span>
+          <span id="progress-pct">0%</span>
+        </div>
+        <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      </div>
+      <div class="terminal">
+        <div class="terminal-head">
+          <span class="dots"><i class="d1"></i><i class="d2"></i><i class="d3"></i></span>
+          <span class="terminal-title">&gt;_ Terminal de Deploy SSH — Servidor 2</span>
+          <span class="terminal-tools">
+            <button type="button" class="icon" id="btn-copy" title="Copiar log">⧉</button>
+            <button type="button" class="icon" id="btn-clear" title="Limpar">✕</button>
+          </span>
+        </div>
+        <div class="terminal-body" id="terminal" role="log" aria-live="polite">
+          <div class="line dim">[OpenMon SSH Engine] Aguardando instruções de automação remota…</div>
+        </div>
+      </div>
+      <div class="result" id="result-box" hidden>
+        <h2 id="result-title"></h2>
+        <dl id="result-list"></dl>
+        <p class="muted small" id="result-note"></p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

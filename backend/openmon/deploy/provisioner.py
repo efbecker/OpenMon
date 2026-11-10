@@ -8,7 +8,7 @@ Fluxo (mesmo desenho do assistente do OpenFlow, endurecido):
   4. SFTP do pacote para ``/tmp/openmon-deploy.XXXX`` (0700) na VM 2
   5. ``provision_db.sh`` como root (sudo -S), com a saída transmitida ao vivo
   6. validação da conexão TLS (verify-full) a partir da VM 1
-  7. gravação de ``/etc/openmon/database.conf`` (0640) e da CA em ``/etc/openmon/pki``
+  7. gravação de ``/etc/openmon/database/database.conf`` (0600, dono openmon) e da CA em ``pki/``
 
 Uso síncrono: ``DatabaseDeployer(request, on_event).run()``.
 Uso em FastAPI/asyncio: ``await deploy_async(request, on_event)``.
@@ -65,7 +65,7 @@ class DeployRequest:
     ssh_allow_cidrs: list[str] = field(default_factory=list)  # vazio = não restringe a porta 22
     timescale_key_fpr: str = ""
     max_connections: int = 150
-    config_dir: Path = Path("/etc/openmon")
+    config_dir: Path = Path("/etc/openmon/database")  # gravável pela API (ReadWritePaths)
     write_config: bool = True
     validate_from_frontend: bool = True
 
@@ -272,17 +272,38 @@ def check_login(host: str, port: int, user: str, password: str, ca_file: str) ->
 # -----------------------------------------------------------------------------
 # Arquivos na VM 1
 # -----------------------------------------------------------------------------
-def write_secure_file(path: Path, content: str, mode: int = 0o600, group: str | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+SERVICE_USER = "openmon"
+
+
+def _service_ids() -> tuple[int, int] | None:
+    """(uid, gid) do usuário de serviço quando rodando como root (CLI/instalador)."""
+    if os.geteuid() != 0:
+        return None
+    import pwd
+    try:
+        pw = pwd.getpwnam(SERVICE_USER)
+    except KeyError:
+        return None
+    return pw.pw_uid, pw.pw_gid
+
+
+def write_secure_file(path: Path, content: str, mode: int = 0o600) -> None:
+    """Escrita atômica com permissão restrita.
+
+    Os arquivos pertencem ao usuário ``openmon`` (a API que lê e reescreve a
+    configuração do banco roda com ele). Quando executado como root pela CLI,
+    o dono é ajustado para ``openmon``.
+    """
+    ids = _service_ids()
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, mode=0o750)
+        if ids:
+            os.chown(path.parent, *ids)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         os.fchmod(fd, mode)
-        if group and os.geteuid() == 0:
-            import grp
-            try:
-                os.fchown(fd, 0, grp.getgrnam(group).gr_gid)
-            except KeyError:
-                os.fchmod(fd, 0o600)
+        if ids:
+            os.fchown(fd, *ids)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         os.replace(tmp, path)
@@ -534,7 +555,7 @@ class DatabaseDeployer:
         ca_file = cfg / "pki" / "db-ca.crt"
         write_secure_file(ca_file, result.ca_cert_pem, mode=0o644)
         write_secure_file(cfg / "database.conf", render_database_conf(result, str(ca_file), owner=False),
-                          mode=0o640, group="openmon")
+                          mode=0o600)
         write_secure_file(cfg / "database-owner.conf", render_database_conf(result, str(ca_file), owner=True),
                           mode=0o600)
         ssh = self.req.ssh
@@ -563,3 +584,45 @@ async def deploy_async(
             if asyncio.iscoroutine(maybe):
                 await maybe
     return await future
+
+
+# -----------------------------------------------------------------------------
+# Apoio ao assistente web
+# -----------------------------------------------------------------------------
+def probe_target(target: SshTarget) -> dict[str, Any]:
+    """Autentica (com a chave do host fixada) e roda a pré-verificação somente leitura.
+
+    Usado pelo botão "Testar Conexão SSH". Não altera nada na VM 2.
+    """
+    with SshSession(target) as session:
+        code, out = session.run(
+            f"bash -s <<'OPENMON_PREFLIGHT'\n{(REMOTE_DIR / 'preflight.sh').read_text()}\nOPENMON_PREFLIGHT")
+    if code != 0:
+        raise DeployError(f"pré-verificação falhou: {out.strip()[-300:]}")
+    pf = parse_kv(out)
+    check_preflight(pf)
+    if pf.get("SUDO") == "password" and not target.effective_sudo_password():
+        raise DeployError("o sudo da VM 2 exige senha; informe a senha")
+    hw = hardware_from_preflight(pf)
+    return {
+        "os": pf.get("OS_PRETTY", ""),
+        "arch": pf.get("ARCH", ""),
+        "hostname": pf.get("HOSTNAME", ""),
+        "cpus": hw.cpus,
+        "mem_mb": hw.mem_bytes // tuning.MB,
+        "disk_gb": (hw.disk_bytes or 0) // tuning.GB,
+        "disk_type": "HDD" if hw.rotational else "SSD/NVMe",
+        "sudo": pf.get("SUDO", ""),
+        "pg_clusters": pf.get("PG_CLUSTERS", ""),
+    }
+
+
+def route_source_ip(host: str, port: int = 5432) -> str | None:
+    """IP local que esta VM usa para alcançar ``host`` (nenhum pacote é enviado)."""
+    try:
+        family, _, _, _, addr = socket.getaddrinfo(host, port, proto=socket.IPPROTO_UDP)[0]
+        with socket.socket(family, socket.SOCK_DGRAM) as sock:
+            sock.connect(addr)
+            return sock.getsockname()[0]
+    except OSError:
+        return None

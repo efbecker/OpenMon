@@ -46,10 +46,12 @@ o papel de proxy reverso e servidor dos estáticos, no padrão Debian
 | `/etc/openmon/` | `root:openmon 0750` | Configuração |
 | `/etc/openmon/openmon.conf` | `root:openmon 0640` | Configuração geral da aplicação |
 | `/etc/openmon/master.key` | `openmon:openmon 0400` | Chave mestra AES-256-GCM do cofre (32 bytes aleatórios) |
-| `/etc/openmon/database.conf` | `root:openmon 0640` | Conexão do papel `openmon_app` (gerado pelo deploy do banco) |
-| `/etc/openmon/database-owner.conf` | `root:root 0600` | Conexão do papel dono do schema, só para migrations |
-| `/etc/openmon/pki/db-ca.crt` | `0644` | CA interna do PostgreSQL (TLS verify-full) |
-| `/etc/openmon/ssh/` | `0750` | Impressão digital SSH fixada da VM 2 |
+| `/etc/openmon/database/` | `openmon:openmon 0750` | Gerado pelo deploy do banco (único ponto de `/etc` gravável pela API) |
+| `/etc/openmon/database/database.conf` | `openmon 0600` | Conexão do papel `openmon_app` |
+| `/etc/openmon/database/database-owner.conf` | `openmon 0600` | Conexão do papel dono do schema, só para migrations |
+| `/etc/openmon/database/pki/db-ca.crt` | `0644` | CA interna do PostgreSQL (TLS verify-full) |
+| `/etc/openmon/database/ssh/` | `0750` | Impressão digital SSH fixada da VM 2 |
+| `/var/lib/openmon/setup.token` | `openmon 0600` | Token de instalação do assistente web (apagado após o deploy) |
 | `/var/lib/openmon/` | `openmon:openmon 0750` | Estado: `spool/` (filas), `reports/` (PDF/CSV gerados), pedido de agendamento do backup |
 | `/var/log/openmon/` | `openmon:adm 0750` | `app.log`, `collector.log`, `auth.log` (JSON por linha, lido pelo Fail2ban) |
 | `/var/backups/openmon/` | `openmon:openmon 0700` | Pacotes `openmon_<data>_<tipo>.tar.zst` |

@@ -16,20 +16,23 @@ padrões do projeto OpenFlow.
 
 ## Instalação em um comando
 
-Duas VMs com **Debian 13 limpo**. Na VM 2 (banco) basta ter SSH com um usuário
-que tenha `sudo` (ou acesso root por chave). Tudo é feito a partir da VM 1:
+Duas VMs com **Debian 13 limpo**. Na VM 1 (Frontend):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/efbecker/OpenMon/main/scripts/install.sh \
-  | sudo bash -s -- --db-host IP_DA_VM2 --db-ssh-user USUARIO
+curl -fsSL https://raw.githubusercontent.com/efbecker/OpenMon/main/scripts/install.sh | sudo bash
 ```
 
 O instalador prepara a VM 1 (pacotes apt, `/opt/openmon`, `/etc/openmon` com a
 chave mestra, Apache2 com HTTPS e headers de segurança, units `systemd`,
-Fail2ban) e em seguida faz o deploy do PostgreSQL + TimescaleDB na VM 2 via SSH:
-mostra a impressão digital SSH da VM 2 para você confirmar, pede a senha e
-transmite as 9 etapas ao vivo. Sem `--db-host`, ele pergunta o IP da VM 2 no fim
-(Enter pula; dá para rodar de novo depois).
+Fail2ban, API) e mostra no final o endereço e um **token de instalação**.
+
+Depois, o banco da VM 2 é instalado **pela interface web**: abra
+`https://IP_DA_VM1/`, cole o token e preencha IP, porta e usuário SSH (com sudo)
+da VM 2, a senha e o IP da VM 1. "Testar Conexão SSH" mostra a impressão digital
+da chave da VM 2 para você conferir e testa o login; "Fazer Deploy" instala
+PostgreSQL + TimescaleDB com o terminal ao vivo. Na VM 2 basta Debian 13 com SSH.
+O token deixa de valer quando o deploy termina com sucesso (para refazer:
+rode o instalador com `--new-setup-token`).
 
 <details>
 <summary>Repositório privado</summary>
@@ -42,16 +45,16 @@ pelo cabeçalho e pelo ambiente, nunca dentro da URL:
 TOKEN=github_pat_...
 curl -fsSL -H "Authorization: Bearer $TOKEN" \
   https://raw.githubusercontent.com/efbecker/OpenMon/main/scripts/install.sh \
-  | sudo GITHUB_TOKEN="$TOKEN" bash -s -- --db-host IP_DA_VM2 --db-ssh-user USUARIO
+  | sudo GITHUB_TOKEN="$TOKEN" bash
 ```
 </details>
 
-Outras opções: `--db-ssh-key /root/.ssh/id_ed25519`, `--ssh-allow 10.10.0.0/24`
-(restringe o SSH da VM 2), `--admin-cidr 10.10.0.0/24` (ativa o nftables da VM 1),
-`--fqdn openmon.empresa.local`, `--skip-db`. Para atualizar, rode o mesmo comando.
+Outras opções: `--fqdn openmon.empresa.local`, `--admin-cidr 10.10.0.0/24`
+(ativa o nftables da VM 1), `--db-ip IP_DA_VM2`, `--new-setup-token`. Para
+atualizar, rode o mesmo comando.
 
 > O Debian não aceita login SSH do `root` por senha por padrão
-> (`PermitRootLogin prohibit-password`). Use um usuário com `sudo` ou uma chave.
+> (`PermitRootLogin prohibit-password`). Use um usuário com `sudo`.
 
 ## Estado atual
 
@@ -60,9 +63,10 @@ Outras opções: `--db-ssh-key /root/.ssh/id_ed25519`, `--ssh-allow 10.10.0.0/24
 | 1. Estrutura de diretórios (FHS), pacotes apt, units systemd, Apache2, nftables, Fail2ban | ✅ [docs/01-arquitetura-debian.md](docs/01-arquitetura-debian.md) |
 | 2. Schema PostgreSQL + TimescaleDB (tenancy, cofre, ativos, hypertables, caggs, retenção) | ✅ [docs/02-banco-de-dados.md](docs/02-banco-de-dados.md) |
 | 3. Deploy remoto do banco via SSH | ✅ [docs/03-deploy-banco-ssh.md](docs/03-deploy-banco-ssh.md) |
-| 4. API (auth local + AD, RBAC, CSRF, cofre) e assistente web do deploy | próximo |
-| 5. Coletores vCenter, Hyper-V, Veeam e SNMP | — |
-| 6. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
+| 4. Assistente web do deploy do banco (token de instalação, terminal ao vivo) | ✅ |
+| 5. API completa: login local + AD, RBAC, CSRF, cofre | próximo |
+| 6. Coletores vCenter, Hyper-V, Veeam e SNMP | — |
+| 7. Dashboards, relatórios (PDF/CSV, 60 meses), alertas, backup/restauração | — |
 
 ## Estrutura do repositório
 
@@ -72,6 +76,8 @@ backend/
   openmon/db/migrations.py descoberta, checksum e empacotamento das migrations
   openmon/deploy/          deploy do banco via SSH (paramiko), tuning, SCRAM, CLI
   openmon/deploy/remote/   scripts bash executados na VM 2
+  openmon/api/             API FastAPI (assistente de instalação em /api/setup)
+frontend/public/           interface web estática (HTML/CSS/JS, compatível com CSP estrita)
   tests/                   testes unitários (pytest) e e2e/ (deploy real via SSH em container)
 packaging/
   apt/                     listas de pacotes das duas VMs

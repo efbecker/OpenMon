@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ssh-allow", action="append", default=[], help="CIDR com acesso SSH à VM 2 (repetível)")
     p.add_argument("--no-firewall", action="store_true", help="não gerenciar nftables na VM 2")
     p.add_argument("--timescale-key-fpr", default="", help="impressão digital esperada da chave apt do TimescaleDB")
-    p.add_argument("--config-dir", type=Path, default=Path("/etc/openmon"))
+    p.add_argument("--config-dir", type=Path, default=Path("/etc/openmon/database"))
     args = p.parse_args(argv)
 
     try:
