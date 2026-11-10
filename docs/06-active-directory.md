@@ -11,10 +11,13 @@ só Administrador global).
 1. No AD, crie uma conta de serviço só com leitura (ex.: `svc-openmon`) e os
    grupos de acesso, por exemplo `OpenMon-Admins`, `OpenMon-NOC` e um grupo por
    cliente (`OpenMon-Cliente-ACME`).
-2. Em **AD/LDAP → Novo diretório**: servidores `ldaps://dc1.empresa.local` (um
-   por linha), Base DN, conta de serviço (DN ou `svc-openmon@empresa.local`) e
-   senha. Se o certificado do DC vem da CA interna, cole a CA (PEM) em
-   *Avançado*.
+2. Em **AD/LDAP → Novo diretório**: controladores de domínio pelo nome DNS
+   (`dc1.empresa.local, dc2.empresa.local`, sem `ldap://`), Segurança (StartTLS na
+   389 ou LDAPS na 636) e Porta, Base DN, conta de serviço (*Bind DN*: DN completo ou
+   `svc-openmon@empresa.local`) e senha. Se o certificado do DC vem da CA interna,
+   cole a CA (PEM) em *Avançado* ou desmarque **Verificar o certificado do
+   controlador de domínio**. Em "Grupos do AD com acesso" vão **grupos**, não a
+   conta de serviço.
 3. Em **Testar**, informe um usuário (e, se quiser, a senha dele): a tela mostra
    cada etapa (TLS, conta de serviço, usuário, grupos, senha) e os grupos do
    usuário, com um botão **Mapear** em cada um.
@@ -45,7 +48,9 @@ só Administrador global).
 ## Segurança
 
 * Só **LDAPS** (`ldaps://`, 636) ou **StartTLS** (`ldap://` + StartTLS, 389). LDAP
-  sem TLS é recusado. O certificado do servidor é validado (CA + nome), TLS 1.2+.
+  sem TLS não existe. O certificado do servidor é validado (CA + nome), TLS 1.2+, a não
+  ser que a caixa "Verificar o certificado" seja desmarcada: a conexão continua
+  criptografada, mas sem conferir o emissor (a escolha fica na auditoria).
 * O `{username}` do filtro é escapado (RFC 4515): `*`, `(`, `)` e `\` digitados
   no login não alteram a busca.
 * Senha vazia é recusada antes de chegar ao AD (evita o "bind anônimo" que

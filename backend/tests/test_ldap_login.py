@@ -126,9 +126,15 @@ def test_ldap_down_does_not_count_as_failure(client):
 
 def test_rejects_plain_ldap_and_requires_admin(client):
     csrf, _ = login(client)
-    body = directory(None, urls=["ldap://ldap.openmon.test:389"], mappings=[])
-    r = client.post("/api/admin/ldap", json=body, headers=h(csrf))
-    assert r.status_code == 422 and "sem TLS" in r.json()["detail"]
+    # Não existe opção sem TLS: o esquema sai da "Segurança" (ldap:// colado vira ldaps:// com LDAPS)
+    r = client.post("/api/admin/ldap", json=directory(None, security="none", mappings=[]), headers=h(csrf))
+    assert r.status_code == 422
+    r = client.post("/api/admin/ldap", json=directory(None, urls=["ldap://dc1.empresa.local"], mappings=[]),
+                    headers=h(csrf))
+    assert r.status_code == 201 and r.json()["directory"]["urls"] == ["ldaps://dc1.empresa.local:636"]
+    sql("DELETE FROM ldap_directories")
+    r = client.post("/api/admin/ldap", json=directory(None, urls=["ldap://dc 1"], mappings=[]), headers=h(csrf))
+    assert r.status_code == 422 and "inválido" in r.json()["detail"]
     r = client.post("/api/admin/ldap", json=directory(None), headers=h(csrf))
     assert r.status_code == 422 and "tenant" in r.json()["detail"]
     client.post("/api/admin/users", json={"username": "noc", "role": "operator", "password": "Senha-Operador-123",
@@ -136,3 +142,28 @@ def test_rejects_plain_ldap_and_requires_admin(client):
     login(client, "noc", "Senha-Operador-123")
     assert client.get("/api/admin/ldap").status_code == 403
     assert auth.COOKIE in client.cookies
+
+
+def test_dc_name_port_and_ignore_certificate(client):
+    """Como no OpenFlow: nome do DC sem prefixo, porta separada e a opção de não verificar o certificado."""
+    csrf, _ = login(client)
+    acme = new_tenant(client, csrf)
+    host, port = LDAP_URL.split("://", 1)[1].rstrip("/").split(":")
+    body = directory(acme["id"], urls=[f"{host}, {host}"], port=int(port), ca_cert_pem=None)
+    # Sem a CA interna e verificando: erro de certificado, com a dica da caixa
+    r = client.post("/api/admin/ldap/test", json=body, headers=h(csrf)).json()
+    assert not r["ok"] and "Verificar o certificado" in r["steps"][0]["detail"], r
+    # Sem verificar: conecta (continua LDAPS) e o login funciona
+    body["verify_tls"] = False
+    r = client.post("/api/admin/ldap/test", json=body, headers=h(csrf)).json()
+    assert r["ok"] and "NÃO verificado" in r["steps"][0]["detail"], r
+    d = client.post("/api/admin/ldap", json=body, headers=h(csrf)).json()["directory"]
+    assert d["urls"] == [f"ldaps://{host}:{port}"] and d["hosts"] == [host] and d["port"] == int(port)
+    assert d["verify_tls"] is False
+    r = client.post("/api/auth/login", json={"username": "carlos", "password": "Carlos-Ldap-Pass-1"})
+    assert r.status_code == 200, r.text
+    # Editar e voltar a verificar (sem trocar a senha da conta de serviço)
+    csrf, _ = login(client)
+    d = client.put(f"/api/admin/ldap/{d['id']}", json={**body, "verify_tls": True, "bind_password": None},
+                   headers=h(csrf)).json()["directory"]
+    assert d["verify_tls"] is True

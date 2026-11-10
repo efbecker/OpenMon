@@ -70,25 +70,38 @@
             <span class="label">Nome</span>
             <input id="f-name" maxlength="120" placeholder="AD corporativo">
           </label>
-          <label class="field">
-            <span class="label">Segurança</span>
-            <select id="f-security">
-              <option value="ldaps">LDAPS (porta 636)</option>
-              <option value="starttls">StartTLS (porta 389)</option>
-            </select>
-          </label>
+          <div class="grid two inner">
+            <label class="field">
+              <span class="label">Segurança</span>
+              <select id="f-security">
+                <option value="starttls">StartTLS (porta 389)</option>
+                <option value="ldaps">LDAPS (porta 636)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">Porta</span>
+              <input id="f-port" type="number" min="1" max="65535" value="389">
+            </label>
+          </div>
           <label class="field full">
-            <span class="label">Servidores (um por linha, em ordem de preferência)</span>
-            <textarea id="f-urls" rows="2" spellcheck="false" placeholder="ldaps://dc1.empresa.local&#10;ldaps://dc2.empresa.local"></textarea>
-            <span class="muted small">Use o nome DNS que está no certificado do DC (não o IP).</span>
+            <span class="label">Controladores de domínio</span>
+            <input id="f-urls" maxlength="1000" spellcheck="false" placeholder="dc1.empresa.local, dc2.empresa.local">
+            <span class="muted small">Nome DNS do DC, sem ldap://. Separe por vírgula; o próximo é usado se o primeiro
+              não responder.</span>
           </label>
+          <label class="check full">
+            <input id="f-verify" type="checkbox" checked><span>Verificar o certificado do controlador de domínio</span>
+          </label>
+          <p class="muted small full" id="verify-hint" hidden>A conexão continua criptografada, mas o OpenMon não
+            confere quem emitiu o certificado do DC. Para conferir, marque a caixa e cole a CA interna em Avançado.</p>
           <label class="field full">
             <span class="label">Base DN</span>
             <input id="f-base" maxlength="1000" spellcheck="false" placeholder="DC=empresa,DC=local">
           </label>
           <label class="field">
-            <span class="label">Conta de serviço (DN ou usuário@domínio)</span>
-            <input id="f-bind-dn" maxlength="1000" spellcheck="false" placeholder="svc-openmon@empresa.local">
+            <span class="label">Conta de serviço (Bind DN)</span>
+            <input id="f-bind-dn" maxlength="1000" spellcheck="false" placeholder="CN=svc-openmon,OU=Serviços,DC=empresa,DC=local">
+            <span class="muted small">DN completo ou usuario@dominio. Uma conta comum do domínio, só com leitura, basta.</span>
           </label>
           <label class="field">
             <span class="label">Senha da conta de serviço</span>
@@ -122,8 +135,9 @@
         </div>
 
         <h3 class="subhead">Grupos do AD com acesso</h3>
-        <p class="muted small">Cole o DN do grupo (ex.: CN=OpenMon-Clientes-ACME,OU=Grupos,DC=empresa,DC=local). O botão
-          Testar abaixo lista os grupos de um usuário de verdade.</p>
+        <p class="muted small">Aqui vão <strong>grupos</strong> do AD, não a conta de serviço: quem for membro do grupo
+          entra com o perfil escolhido (ex.: CN=OpenMon-Admins,OU=Grupos,DC=empresa,DC=local). Rode o Testar abaixo com o
+          seu usuário: ele lista os seus grupos e eles aparecem como sugestão neste campo.</p>
         <div class="table-wrap">
           <table class="table" id="maps">
             <thead><tr><th>DN do grupo</th><th>Perfil</th><th>Tenant</th><th></th></tr></thead>

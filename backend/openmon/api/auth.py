@@ -195,9 +195,11 @@ class PgAuthStore:
         """Diretórios habilitados, com a senha da conta de serviço decifrada e os mapeamentos de grupo."""
         async with pool.system_transaction() as conn:
             dirs = await conn.fetch(
-                """SELECT id, name, urls, security, base_dn, bind_credential_id::text AS cred_id, user_filter,
-                          group_attribute, ca_cert_pem, timeout_seconds
-                     FROM ldap_directories WHERE is_enabled ORDER BY id""")
+                """SELECT d.id, d.name, d.urls, d.security, d.base_dn, d.bind_credential_id::text AS cred_id,
+                          d.user_filter, d.group_attribute, d.ca_cert_pem, d.timeout_seconds,
+                          coalesce((c.params->>'verify_tls')::boolean, true) AS verify_tls
+                     FROM ldap_directories d LEFT JOIN credentials c ON c.id = d.bind_credential_id
+                    WHERE d.is_enabled ORDER BY d.id""")
             out = []
             for d in dirs:
                 bind_dn, password = (None, "")
@@ -460,7 +462,8 @@ async def _ldap_login(directories: list[dict[str, Any]], username: str, password
         cfg = ldapauth.Directory(
             urls=list(d["urls"]), security=d["security"], base_dn=d["base_dn"], bind_dn=d["bind_dn"],
             bind_password=d["bind_password"], user_filter=d["user_filter"], group_attribute=d["group_attribute"] or "",
-            ca_cert_pem=d["ca_cert_pem"], timeout=int(d["timeout_seconds"] or 5))
+            ca_cert_pem=d["ca_cert_pem"], timeout=int(d["timeout_seconds"] or 5),
+            verify_tls=d.get("verify_tls", True) is not False)
         try:
             lu = await asyncio.to_thread(ldapauth.authenticate, cfg, username, password)
         except ldapauth.LdapAuthFailed as exc:

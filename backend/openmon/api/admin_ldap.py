@@ -24,7 +24,9 @@ from openmon.db import pool
 
 router = APIRouter(prefix="/api/admin/ldap", tags=["admin"])
 
-URL_RE = re.compile(r"^ldaps?://[A-Za-z0-9.-]+(:\d{1,5})?/?$", re.I)
+HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+URL_RE = re.compile(r"^(?:ldaps?://)?([A-Za-z0-9.-]+)(?::(\d{1,5}))?/?$", re.I)
+DEFAULT_PORT = {"ldaps": 636, "starttls": 389}
 AD_FILTER = "(&(objectClass=user)(sAMAccountName={username}))"
 
 
@@ -38,8 +40,11 @@ class MappingForm(BaseModel):
 class DirectoryForm(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     is_enabled: bool = True
+    # Nome do DC (armazemad01.empresa.com.br) ou URL (ldaps://dc:636); o esquema sai de "security"
     urls: list[str] = Field(min_length=1, max_length=10)
     security: str = Field(default="ldaps", pattern="^(ldaps|starttls)$")
+    port: int | None = Field(default=None, ge=1, le=65535)
+    verify_tls: bool = True
     base_dn: str = Field(min_length=3, max_length=1000)
     bind_dn: str = Field(min_length=3, max_length=1000)
     bind_password: str | None = Field(default=None, max_length=1024)
@@ -57,14 +62,22 @@ class TestForm(DirectoryForm):
 
 
 def _validate(form: DirectoryForm) -> dict[str, Any]:
-    urls = [u.strip() for u in form.urls if u.strip()]
-    if not urls:
-        raise HTTPException(422, "Informe pelo menos um servidor (ex.: ldaps://dc1.empresa.local).")
+    raw = [x.strip() for u in form.urls for x in u.split(",") if x.strip()]
+    if not raw:
+        raise HTTPException(422, "Informe pelo menos um controlador de domínio (ex.: dc1.empresa.local).")
     prefix = "ldaps://" if form.security == "ldaps" else "ldap://"
-    for u in urls:
-        if not URL_RE.match(u) or not u.lower().startswith(prefix):
-            raise HTTPException(422, f"Servidor inválido: {u}. Com {'LDAPS' if form.security == 'ldaps' else 'StartTLS'} "
-                                     f"use {prefix}nome-do-dc[:porta]. LDAP sem TLS não é aceito.")
+    urls = []
+    for u in raw:
+        m = URL_RE.match(u)
+        if not m or not HOST_RE.match(m.group(1)):
+            raise HTTPException(422, f"Controlador de domínio inválido: {u}. Use o nome DNS do DC, por exemplo "
+                                     "dc1.empresa.local.")
+        port = form.port or (int(m.group(2)) if m.group(2) else DEFAULT_PORT[form.security])
+        if not 1 <= port <= 65535:
+            raise HTTPException(422, f"Porta inválida em {u}.")
+        url = f"{prefix}{m.group(1)}:{port}"
+        if url not in urls:
+            urls.append(url)
     if "{username}" not in form.user_filter or not form.user_filter.strip().startswith("("):
         raise HTTPException(422, "O filtro de usuário precisa estar entre parênteses e conter {username}.")
     pem = (form.ca_cert_pem or "").strip() or None
@@ -75,7 +88,15 @@ def _validate(form: DirectoryForm) -> dict[str, Any]:
         raise HTTPException(422, "Atributo de grupos inválido.")
     return {"name": form.name.strip(), "is_enabled": form.is_enabled, "urls": urls, "security": form.security,
             "base_dn": form.base_dn.strip(), "bind_dn": form.bind_dn.strip(), "user_filter": form.user_filter.strip(),
-            "group_attribute": attr, "ca_cert_pem": pem, "timeout_seconds": form.timeout_seconds}
+            "group_attribute": attr, "ca_cert_pem": pem, "timeout_seconds": form.timeout_seconds,
+            "verify_tls": form.verify_tls}
+
+
+async def _save_verify(conn: Any, cred_id: str | None, verify: bool) -> None:
+    """Sem coluna própria (o banco não muda na atualização): fica nos parâmetros da credencial de bind."""
+    if cred_id:
+        await conn.execute("UPDATE credentials SET params = params || jsonb_build_object('verify_tls', $2::boolean) "
+                           "WHERE id = $1::uuid", cred_id, verify)
 
 
 async def _mappings(conn: Any, maps: list[MappingForm]) -> list[tuple[str, int, int | None, int]]:
@@ -108,6 +129,7 @@ async def _save_mappings(conn: Any, directory_id: int, rows: list[tuple[str, int
 _SELECT = """
 SELECT d.id, d.name, d.is_enabled, d.urls, d.security, d.base_dn, d.user_filter, d.group_attribute, d.ca_cert_pem,
        d.timeout_seconds, d.created_at, d.updated_at, d.bind_credential_id::text AS cred_id, c.username AS bind_dn,
+       coalesce((c.params->>'verify_tls')::boolean, true) AS verify_tls,
        (SELECT count(*) FROM users u WHERE u.ldap_directory_id = d.id) AS users,
        coalesce((SELECT json_agg(json_build_object('group_dn', m.group_dn, 'role', r.code, 'tenant_id', m.tenant_id,
                                                    'priority', m.priority) ORDER BY m.priority, m.id)
@@ -119,8 +141,12 @@ SELECT d.id, d.name, d.is_enabled, d.urls, d.security, d.base_dn, d.user_filter,
 
 def _out(r: Any) -> dict[str, Any]:
     maps = r["mappings"]
-    return {"id": r["id"], "name": r["name"], "is_enabled": r["is_enabled"], "urls": list(r["urls"]),
-            "security": r["security"], "base_dn": r["base_dn"], "bind_dn": r["bind_dn"] or "",
+    urls = list(r["urls"])
+    hosts = [URL_RE.match(u).group(1) if URL_RE.match(u) else u for u in urls]
+    ports = {URL_RE.match(u).group(2) for u in urls if URL_RE.match(u)}
+    port = int(ports.pop()) if len(ports) == 1 and None not in ports else DEFAULT_PORT[r["security"]]
+    return {"id": r["id"], "name": r["name"], "is_enabled": r["is_enabled"], "urls": urls, "hosts": hosts,
+            "port": port, "verify_tls": r["verify_tls"], "security": r["security"], "base_dn": r["base_dn"], "bind_dn": r["bind_dn"] or "",
             "has_password": bool(r["cred_id"]), "user_filter": r["user_filter"],
             "group_attribute": r["group_attribute"], "ca_cert_pem": r["ca_cert_pem"] or "",
             "timeout_seconds": r["timeout_seconds"], "users": r["users"], "created_at": _iso(r["created_at"]),
@@ -162,9 +188,10 @@ async def create_directory(form: DirectoryForm, request: Request,
                    VALUES ($1, $2, $3, $4, $5, $6::uuid, $7, $8, $9, $10) RETURNING id""",
                 v["name"], v["is_enabled"], v["urls"], v["security"], v["base_dn"], cred, v["user_filter"],
                 v["group_attribute"], v["ca_cert_pem"], v["timeout_seconds"])
+            await _save_verify(conn, cred, v["verify_tls"])
             await _save_mappings(conn, did, maps)
             await _audit(conn, session, request, "ldap.create", "ldap_directory", did, None,
-                         {k: v[k] for k in ("name", "urls", "security", "base_dn", "bind_dn", "is_enabled")}
+                         {k: v[k] for k in ("name", "urls", "security", "base_dn", "bind_dn", "is_enabled", "verify_tls")}
                          | {"mappings": len(maps)})
             row = await conn.fetchrow(_SELECT + " WHERE d.id = $1", did)
     except pool.DatabaseUnavailable as exc:
@@ -206,9 +233,10 @@ async def update_directory(directory_id: int, form: DirectoryForm, request: Requ
                     WHERE id = $1""",
                 directory_id, v["name"], v["is_enabled"], v["urls"], v["security"], v["base_dn"], cred,
                 v["user_filter"], v["group_attribute"], v["ca_cert_pem"], v["timeout_seconds"])
+            await _save_verify(conn, cred, v["verify_tls"])
             await _save_mappings(conn, directory_id, maps)
             await _audit(conn, session, request, "ldap.update", "ldap_directory", directory_id, None,
-                         {k: v[k] for k in ("name", "urls", "security", "base_dn", "bind_dn", "is_enabled")}
+                         {k: v[k] for k in ("name", "urls", "security", "base_dn", "bind_dn", "is_enabled", "verify_tls")}
                          | {"mappings": len(maps), "password_changed": bool(form.bind_password)})
             row = await conn.fetchrow(_SELECT + " WHERE d.id = $1", directory_id)
     except pool.DatabaseUnavailable as exc:
@@ -271,7 +299,7 @@ async def test_directory(form: TestForm, request: Request,
     cfg = ldapauth.Directory(urls=v["urls"], security=v["security"], base_dn=v["base_dn"], bind_dn=v["bind_dn"],
                              bind_password=password, user_filter=v["user_filter"],
                              group_attribute=v["group_attribute"], ca_cert_pem=v["ca_cert_pem"],
-                             timeout=v["timeout_seconds"])
+                             timeout=v["timeout_seconds"], verify_tls=v["verify_tls"])
     username = (form.test_username or "").strip() or None
     result = await asyncio.to_thread(ldapauth.test, cfg, username, form.test_password or None)
     if username and "groups" in result:

@@ -46,6 +46,7 @@ class Directory:
     group_attribute: str = "memberOf"
     ca_cert_pem: str | None = None
     timeout: int = 5
+    verify_tls: bool = True     # False: TLS continua obrigatório, mas o certificado do DC não é conferido
 
 
 @dataclass
@@ -73,6 +74,8 @@ def _ldap3() -> Any:
 
 def _tls(d: Directory) -> Any:
     ldap3 = _ldap3()
+    if not d.verify_tls:
+        return ldap3.Tls(validate=ssl.CERT_NONE, version=ssl.PROTOCOL_TLS_CLIENT)
     kwargs: dict[str, Any] = {"validate": ssl.CERT_REQUIRED, "version": ssl.PROTOCOL_TLS_CLIENT}
     if d.ca_cert_pem and d.ca_cert_pem.strip():
         kwargs["ca_certs_data"] = d.ca_cert_pem.strip()
@@ -100,7 +103,8 @@ def _describe(exc: BaseException) -> str:
     if "certificate has expired" in low:
         return f"o certificado TLS do servidor está vencido ({text})"
     if "certificate verify failed" in low or "certificate_verify_failed" in low:
-        return f"certificado TLS do servidor não confere ({text}). Informe a CA do AD em \"Certificado da CA\""
+        return (f"certificado TLS do servidor não confere ({text}). Informe a CA do AD em \"Certificado da CA\" "
+                "ou desmarque \"Verificar o certificado do controlador de domínio\"")
     if "doesn't match" in low or ("hostname" in low and "match" in low):
         return ("o nome usado no endereço não confere com o certificado TLS do servidor. Use o nome DNS "
                 "que está no certificado do DC, não o IP")
@@ -241,7 +245,8 @@ def test(d: Directory, username: str | None = None, password: str | None = None)
     except LdapError as exc:
         step("Conexão TLS", False, str(exc))
         return out
-    step("Conexão TLS", True, f"{url} ({'LDAPS' if d.security == 'ldaps' else 'StartTLS'}, certificado validado)")
+    cert = "certificado validado" if d.verify_tls else "certificado NÃO verificado"
+    step("Conexão TLS", True, f"{url} ({'LDAPS' if d.security == 'ldaps' else 'StartTLS'}, {cert})")
     step("Conta de serviço", True, d.bind_dn)
     try:
         if not username:

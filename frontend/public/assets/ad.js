@@ -80,8 +80,11 @@
     $("form-title").textContent = d ? `Editar ${d.name}` : "Novo diretório";
     $("f-enabled").checked = d ? d.is_enabled : true;
     $("f-name").value = d ? d.name : "";
-    $("f-security").value = d ? d.security : "ldaps";
-    $("f-urls").value = d ? d.urls.join("\n") : "";
+    $("f-security").value = d ? d.security : "starttls";
+    $("f-urls").value = d ? (d.hosts || d.urls).join(", ") : "";
+    $("f-port").value = d ? d.port : 389;
+    $("f-verify").checked = d ? d.verify_tls !== false : true;
+    $("verify-hint").hidden = $("f-verify").checked;
     $("f-base").value = d ? d.base_dn : "";
     $("f-bind-dn").value = d ? d.bind_dn : "";
     $("f-bind-pw").value = "";
@@ -105,8 +108,10 @@
     return {
       name: $("f-name").value.trim(),
       is_enabled: $("f-enabled").checked,
-      urls: $("f-urls").value.split(/\s+/).map((u) => u.trim()).filter(Boolean),
+      urls: $("f-urls").value.split(/[\s,;]+/).map((u) => u.trim()).filter(Boolean),
       security: $("f-security").value,
+      port: Number($("f-port").value) || null,
+      verify_tls: $("f-verify").checked,
       base_dn: $("f-base").value.trim(),
       bind_dn: $("f-bind-dn").value.trim(),
       bind_password: $("f-bind-pw").value || null,
@@ -119,10 +124,9 @@
   }
 
   $("f-security").addEventListener("change", () => {
-    const urls = $("f-urls");
-    const ldaps = $("f-security").value === "ldaps";
-    urls.value = urls.value.split("\n").map((u) => ldaps ? u.replace(/^ldap:\/\//i, "ldaps://") : u.replace(/^ldaps:\/\//i, "ldap://")).join("\n");
+    $("f-port").value = $("f-security").value === "ldaps" ? 636 : 389;
   });
+  $("f-verify").addEventListener("change", () => { $("verify-hint").hidden = $("f-verify").checked; });
 
   $("btn-add-map").addEventListener("click", () => $("maps").tBodies[0].append(mapRow(null)));
 
