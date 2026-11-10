@@ -339,12 +339,23 @@ async def create_admin(form: AdminForm, request: Request) -> dict[str, Any]:
     if problem:
         raise HTTPException(422, problem)
     ip = client_ip(request)
-    password_hash = await asyncio.to_thread(security.hash_password, password)
+    try:
+        password_hash = await asyncio.to_thread(security.hash_password, password)
+    except RuntimeError as exc:  # python3-argon2 ausente
+        raise HTTPException(500, f"Não foi possível gerar o hash da senha: {exc}.") from exc
     try:
         user_id = await create_first_admin(form, password_hash, security.inet_or_none(ip),
                                            security.user_agent(request))
     except pool.DatabaseUnavailable as exc:
         raise HTTPException(503, f"Banco de dados indisponível: {exc}") from exc
+    except Exception as exc:
+        sqlstate = getattr(exc, "sqlstate", None)
+        if sqlstate is None:
+            raise
+        # Erro do PostgreSQL (permissão, schema, restrição): mostra a causa, sem dados sensíveis
+        authlog.event("setup.admin_failed", ip, username=form.username, source="setup", sqlstate=sqlstate)
+        raise HTTPException(500, f"O banco recusou a criação do administrador ({sqlstate}: "
+                                 f"{str(exc).splitlines()[0][:200]}).") from exc
     if user_id is None:
         raise HTTPException(409, "Já existe um administrador. Use \"Ir para o login\".")
     _close_setup()

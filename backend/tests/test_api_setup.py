@@ -185,3 +185,29 @@ def test_finish_when_admin_already_exists(provisioned):
     assert provisioned.post("/api/setup/admin", headers=H, json=ADMIN).status_code == 409
     assert provisioned.post("/api/setup/finish", headers=H).status_code == 200
     assert provisioned.get("/api/setup/status").json()["admin_created"] is True
+
+
+def test_unexpected_error_shows_cause_and_journal_hint(provisioned, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("falha qualquer")
+    monkeypatch.setattr(setup, "users_exist", boom)
+    from fastapi.testclient import TestClient
+    from openmon.api.main import app
+    with TestClient(app, raise_server_exceptions=False) as c:
+        r = c.get("/api/setup/admin", headers=H)
+    assert r.status_code == 500
+    d = r.json()["detail"]
+    assert "(RuntimeError): falha qualquer" in d and "journalctl -u openmon-api" in d
+
+
+def test_connect_errors_are_explained():
+    from openmon.db.pool import describe_connect_error
+
+    class InvalidPasswordError(Exception):
+        pass
+
+    class InvalidAuthorizationSpecificationError(Exception):
+        pass
+    assert "senha do papel openmon_app" in describe_connect_error(InvalidPasswordError("x"))
+    assert "pg_hba.conf" in describe_connect_error(InvalidAuthorizationSpecificationError("no pg_hba.conf entry"))
+    assert "não respondeu" in describe_connect_error(ConnectionRefusedError())

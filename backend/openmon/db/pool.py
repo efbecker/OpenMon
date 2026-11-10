@@ -26,6 +26,23 @@ class DatabaseUnavailable(RuntimeError):
     """Banco não configurado ou inacessível."""
 
 
+def describe_connect_error(exc: BaseException) -> str:
+    """Mensagem útil (sem segredos) para falhas ao conectar no PostgreSQL da VM 2."""
+    name = type(exc).__name__
+    text = str(exc).splitlines()[0][:200] if str(exc) else ""
+    if name == "InvalidPasswordError":
+        return ("o banco recusou a senha do papel openmon_app; refaça o deploy do banco "
+                "(isso regrava /etc/openmon/database/database.conf)")
+    if name == "InvalidAuthorizationSpecificationError":
+        return (f"o pg_hba.conf do Servidor 2 recusou a conexão deste servidor ({text}); confira o "
+                "\"IP do Servidor 1\" usado no deploy")
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return f"o certificado TLS do banco não confere com a CA em /etc/openmon/database/pki ({text})"
+    if isinstance(exc, (ConnectionRefusedError, asyncio.TimeoutError, TimeoutError)):
+        return f"o PostgreSQL do Servidor 2 não respondeu ({name}); confira se ele está ativo e acessível"
+    return f"não foi possível conectar ao banco ({name}: {text})"
+
+
 @dataclass(frozen=True)
 class DbSettings:
     host: str
@@ -83,10 +100,8 @@ async def get_pool() -> Any:
                     ssl=s.ssl_context(), min_size=0, max_size=10, timeout=10, command_timeout=30,
                     max_inactive_connection_lifetime=300,
                     server_settings={"application_name": "openmon-api", "search_path": "openmon"})
-            except (OSError, asyncio.TimeoutError, ssl.SSLError) as exc:
-                raise DatabaseUnavailable(f"não foi possível conectar ao banco: {type(exc).__name__}") from exc
-            except Exception as exc:  # asyncpg.PostgresError e afins
-                raise DatabaseUnavailable(f"não foi possível conectar ao banco: {exc}") from exc
+            except Exception as exc:  # asyncpg.PostgresError, OSError, ssl.SSLError...
+                raise DatabaseUnavailable(describe_connect_error(exc)) from exc
     return _pool
 
 
@@ -105,8 +120,8 @@ async def transaction(user_id: int | None = None, is_global: bool = False,
     try:
         conn_cm = pool.acquire()
         conn = await conn_cm.__aenter__()
-    except (OSError, asyncio.TimeoutError, ssl.SSLError) as exc:
-        raise DatabaseUnavailable(f"não foi possível conectar ao banco: {type(exc).__name__}") from exc
+    except Exception as exc:  # a conexão só é aberta aqui (min_size=0)
+        raise DatabaseUnavailable(describe_connect_error(exc)) from exc
     try:
         async with conn.transaction():
             await conn.execute("SELECT openmon.set_request_context($1, $2, $3)",

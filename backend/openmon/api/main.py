@@ -4,7 +4,11 @@
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+import logging
+import secrets
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from openmon import __version__
 from openmon.api import admin_security, auth, setup
@@ -14,6 +18,28 @@ app = FastAPI(title="OpenMon", version=__version__, docs_url=None, redoc_url=Non
 app.include_router(setup.router)
 app.include_router(auth.router)
 app.include_router(admin_security.router)
+
+_log = logging.getLogger("openmon.api")
+if not _log.handlers:  # stderr -> journal (journalctl -u openmon-api)
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    _log.addHandler(_h)
+    _log.propagate = False
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Erro inesperado: traceback completo no journal e uma mensagem útil (sem segredos) na tela."""
+    ref = secrets.token_hex(4)
+    _log.error("erro %s em %s %s", ref, request.method, request.url.path, exc_info=exc)
+    detail = f"Erro interno {ref} ({type(exc).__name__})"
+    if request.url.path.startswith("/api/setup/"):
+        # O assistente só é acessível com o token de instalação: vale mostrar a causa
+        text = str(exc).splitlines()[0][:200] if str(exc) else ""
+        if text:
+            detail += f": {text}"
+    detail += f". Detalhes no Servidor 1: sudo journalctl -u openmon-api --no-pager | grep -A40 {ref}"
+    return JSONResponse({"detail": detail}, status_code=500)
 
 
 @app.get("/api/health")
