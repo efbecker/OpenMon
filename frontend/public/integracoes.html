@@ -37,7 +37,7 @@
       <div class="section-head">
         <div>
           <h2>Integrações <span class="count" id="count"></span></h2>
-          <p class="muted small">O que o OpenMon coleta: VMware vCenter, hosts Hyper-V (WinRM), Veeam Backup &amp;
+          <p class="muted small">O que o OpenMon coleta: VMware vCenter, VMware Cloud Director (vCloud), hosts Hyper-V (WinRM), Veeam Backup &amp;
             Replication (REST) e equipamentos SNMP v2c/v3. Senhas, comunidades e chaves SNMPv3 ficam no cofre
             (AES-256-GCM) e nunca voltam para o navegador. A coleta roda nos serviços <code>openmon-collector@*</code>
             do Servidor 1, no intervalo de cada integração.</p>
@@ -81,7 +81,7 @@
       <form class="rule-form mt" id="rule-form" novalidate autocomplete="off">
         <input id="r-priority" type="number" min="0" max="100000" value="100" aria-label="Prioridade" title="Prioridade (menor primeiro)">
         <select id="r-field" aria-label="Campo">
-          <option value="folder">Pasta do vCenter</option>
+          <option value="folder">Pasta / organização do vCloud</option>
           <option value="resource_pool">Resource pool</option>
           <option value="cluster">Cluster</option>
           <option value="hyperv_host">Host Hyper-V</option>
@@ -154,9 +154,22 @@
             <textarea id="f-hosts" rows="3" spellcheck="false" placeholder="hv01.empresa.local&#10;hv02.empresa.local"></textarea>
             <span class="muted small">Uma sessão WinRM por host traz todas as VMs dele de uma vez (JSON).</span>
           </label>
-          <label class="field" data-kinds="veeam">
+          <label class="field" data-kinds="veeam vmware_vcd">
             <span class="label">Versão da API REST</span>
             <input id="f-api-version" maxlength="20" spellcheck="false" placeholder="1.1-rev1">
+          </label>
+          <label class="field" data-kinds="vmware_vcd">
+            <span class="label">Autenticação</span>
+            <select id="f-vcd-auth">
+              <option value="password">Usuário e senha</option>
+              <option value="token">API token (refresh token)</option>
+            </select>
+          </label>
+          <label class="field full" data-kinds="vmware_vcd">
+            <span class="label">Organizações a coletar (opcional, uma por linha)</span>
+            <textarea id="f-orgs" rows="2" spellcheck="false" placeholder="POLLUX*&#10;(em branco = todas)"></textarea>
+            <span class="muted small">Aceita * e ?. Para mandar cada organização para o tenant certo, use as regras de
+              tenant com o campo "Pasta / organização do vCloud".</span>
           </label>
 
           <label class="field" data-kinds="snmp">
@@ -208,12 +221,12 @@
             <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
           </label>
 
-          <label class="field" data-kinds="vmware_vcenter hyperv veeam">
+          <label class="field" data-kinds="vmware_vcenter vmware_vcd hyperv veeam">
             <span class="label" id="l-user">Usuário</span>
             <input id="f-user" maxlength="256" spellcheck="false">
           </label>
-          <label class="field" data-kinds="vmware_vcenter hyperv veeam">
-            <span class="label">Senha</span>
+          <label class="field" data-kinds="vmware_vcenter vmware_vcd hyperv veeam">
+            <span class="label" id="l-secret">Senha</span>
             <input id="f-secret" type="password" maxlength="1024" autocomplete="new-password">
             <span class="muted small secret-hint" hidden>Guardada no cofre. Deixe em branco para manter.</span>
           </label>
@@ -221,13 +234,13 @@
           <details class="advanced full">
             <summary>Avançado: certificado, tempo limite e descoberta</summary>
             <div class="grid two">
-              <label class="check" data-kinds="vmware_vcenter hyperv veeam">
+              <label class="check" data-kinds="vmware_vcenter vmware_vcd hyperv veeam">
                 <input id="f-verify" type="checkbox" checked><span>Validar o certificado TLS do servidor</span>
               </label>
               <label class="check" data-kinds="hyperv">
                 <input id="f-https" type="checkbox" checked><span>WinRM por HTTPS (5986)</span>
               </label>
-              <label class="field full" data-kinds="vmware_vcenter hyperv veeam">
+              <label class="field full" data-kinds="vmware_vcenter vmware_vcd hyperv veeam">
                 <span class="label">Certificado da CA (PEM, opcional)</span>
                 <textarea id="f-ca" rows="4" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
                 <span class="muted small">Para certificados emitidos pela CA interna. Em branco, valem as CAs do sistema.</span>

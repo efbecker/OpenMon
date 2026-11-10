@@ -78,7 +78,7 @@ atualizar, rode o mesmo comando.
 | 5c. Tenants e usuários por tenant (RBAC, RLS, senha provisória, auditoria) | ✅ [docs/05-tenants-e-usuarios.md](docs/05-tenants-e-usuarios.md) |
 | 5d. Login AD/LDAP opcional (LDAPS/StartTLS, grupos → perfil + tenant, cofre AES-256-GCM) | ✅ [docs/06-active-directory.md](docs/06-active-directory.md) |
 | 6a. Coletor SNMP v2c/v3, telas Integrações e Inventário, links de clientes | ✅ [docs/07-integracoes.md](docs/07-integracoes.md) |
-| 6b. Coletores vCenter (lote, 5.000+ VMs), Hyper-V (WinRM) e Veeam (REST), tela Backups com SLA, regras de tenant | ✅ [docs/07-integracoes.md](docs/07-integracoes.md) |
+| 6b. Coletores vCenter (lote, 5.000+ VMs), vCloud Director (orgs, VDCs, VMs), Hyper-V (WinRM) e Veeam (REST), tela Backups com SLA, regras de tenant | ✅ [docs/07-integracoes.md](docs/07-integracoes.md) |
 | 7. Alertas e notificações (e-mail STARTTLS/TLS, Telegram, webhook HMAC), reconhecimento, agendador | ✅ [docs/08-alertas.md](docs/08-alertas.md) |
 | 8. Dashboards, relatórios (PDF/CSV, 60 meses), backup/restauração | — |
 

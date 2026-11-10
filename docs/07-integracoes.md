@@ -67,6 +67,32 @@ inteira, gravação no banco incluída, levou ~7,5 s.
 VM desligada aparece como "desligada" (não "fora"); template não entra no inventário. VM apagada no vCenter sai
 do inventário na coleta seguinte, com o histórico mantido.
 
+## VMware Cloud Director (vCloud)
+
+Tipo **VMware vCloud Director** em Integrações (roda no mesmo serviço `openmon-collector@vmware`, sem mudar o banco).
+Só leitura, pela API REST (padrão 38.0 = Cloud Director 10.5; 10.4 = 37.x, 10.6 = 39.x).
+
+- **Endereço**: o nome do portal, por exemplo `vcloud.empresa.com.br` (pode colar com `https://`). Porta 443.
+- **Usuário e senha**: `usuario@System` para a conta do provedor (vê todas as organizações) ou `usuario@Org` para uma
+  organização só. Basta uma conta com permissão de leitura de organizações, VDCs e VMs.
+- **API token**: em vez da senha, o *refresh token* gerado em Preferências do usuário > Tokens de acesso à API. No
+  campo Organização vai `System` (provedor) ou o nome da organização.
+- **Organizações a coletar**: opcional, uma por linha, com `*` e `?`. Em branco, coleta todas.
+
+A cada coleta (padrão 300 s), no Query Service, 128 registros por página:
+
+| No vCloud | No OpenMon |
+|---|---|
+| Org VDC | ativo *Datacenter* `Org / VDC`, com CPU (MHz e % da alocação) e memória (usada e % da alocação) |
+| Perfil de armazenamento do VDC | ativo *Datastore* `Org / VDC / Perfil`, com limite e uso (o alerta de 90% vale) |
+| VM (sem templates) | ativo *VM* com vCPU, RAM, disco alocado, IP, SO, vApp e situação (ligada/desligada) |
+
+**Tenant de cada cliente**: crie uma regra de tenant com o campo **Pasta / organização do vCloud**. O padrão casa com
+o nome da organização (`POLLUX*`) ou com `Org/VDC` (`POLLUX/VDC-POLLUX`). Sem regra, fica no tenant da integração.
+
+O Query Service não traz o uso real de CPU e memória de cada VM. Para isso, cadastre também o vCenter que está por
+baixo (as VMs aparecem nas duas integrações).
+
 ## Hyper-V (WinRM)
 
 Em cada host: `winrm quickconfig -transport:https` (certificado do host) e uma conta do domínio nos grupos

@@ -18,6 +18,7 @@ import ssl
 import threading
 from typing import Any
 
+from openmon.collector import vcd
 from openmon.collector.common import CollectorError, Integration, Writer
 
 log = logging.getLogger("openmon.collector.vmware")
@@ -301,6 +302,8 @@ def _pct(part: Any, total: Any) -> float | None:
 
 async def test(integ: Integration) -> dict[str, Any]:
     """"Testar conexão": login, versão e contagem de objetos (sem gravar nada)."""
+    if vcd.is_vcd(integ):
+        return await vcd.test(integ)
     def run() -> dict[str, Any]:
         from pyVmomi import vim
         si = _connect(integ)
@@ -325,6 +328,8 @@ async def test(integ: Integration) -> dict[str, Any]:
 
 
 async def poll(integ: Integration, w: Writer) -> str:
+    if vcd.is_vcd(integ):
+        return await vcd.poll(integ, w)
     data = await asyncio.to_thread(collect, integ)
     about = data["about"]
     root = (await w.assets_bulk([{"external_id": "vcenter", "asset_type": "vcenter", "name": integ.name,

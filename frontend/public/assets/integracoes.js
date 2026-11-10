@@ -3,14 +3,16 @@
 
 (function () {
   const { $, el, api, boot, button, showError, when } = window.OpenMon;
-  const KIND = { vmware_vcenter: "VMware vCenter", hyperv: "Hyper-V (WinRM)", veeam: "Veeam B&R", snmp: "SNMP" };
-  const PORT = { vmware_vcenter: 443, hyperv: 5986, veeam: 9419, snmp: 161 };
-  const INTERVAL = { vmware_vcenter: 60, hyperv: 60, veeam: 300, snmp: 60 };
-  const USER_LABEL = { vmware_vcenter: "Usuário (ex.: openmon@vsphere.local)", hyperv: "Usuário (DOMINIO\\usuario)",
+  const KIND = { vmware_vcenter: "VMware vCenter", vmware_vcd: "VMware vCloud Director", hyperv: "Hyper-V (WinRM)", veeam: "Veeam B&R", snmp: "SNMP" };
+  const PORT = { vmware_vcenter: 443, vmware_vcd: 443, hyperv: 5986, veeam: 9419, snmp: 161 };
+  const INTERVAL = { vmware_vcenter: 60, vmware_vcd: 300, hyperv: 60, veeam: 300, snmp: 60 };
+  const USER_LABEL = { vmware_vcenter: "Usuário (ex.: openmon@vsphere.local)",
+    vmware_vcd: "Usuário (usuario@System, ou usuario@Org)", hyperv: "Usuário (DOMINIO\\usuario)",
     veeam: "Usuário (DOMINIO\\usuario)" };
   const STATUS = { ok: ["tag-ok", "ok"], warning: ["tag-auto", "aviso"], error: ["tag-bad", "erro"] };
   const DETAIL = { uptime_days: "No ar há (dias)", ip: "IP", vendor: "Fabricante", version: "Versão", build: "Build",
-    product: "Produto", vms: "VMs", hosts: "Hosts", datastores: "Datastores", jobs: "Jobs", repositories: "Repositórios" };
+    product: "Produto", api_version: "Versão da API", provider: "Conta do provedor", orgs: "Organizações",
+    vdcs: "VDCs", orgs_matched: "Organizações no filtro", vms: "VMs", hosts: "Hosts", datastores: "Datastores", jobs: "Jobs", repositories: "Repositórios" };
   let items = [];
   let tenants = [];
   let canManage = false;
@@ -85,9 +87,9 @@
   }
 
   // --------------------------------------------------------- regras de tenant
-  const FIELD = { folder: "Pasta do vCenter", resource_pool: "Resource pool", cluster: "Cluster",
+  const FIELD = { folder: "Pasta / organização do vCloud", resource_pool: "Resource pool", cluster: "Cluster",
     hyperv_host: "Host Hyper-V", veeam_job: "Job do Veeam", name_regex: "Nome (regex)", vsphere_tag: "Tag do vSphere" };
-  const PLACEHOLDER = { folder: "Clientes/ACME*", resource_pool: "ACME*", cluster: "CL-CLIENTES-*",
+  const PLACEHOLDER = { folder: "Clientes/ACME* ou ORG-DO-CLIENTE*", resource_pool: "ACME*", cluster: "CL-CLIENTES-*",
     hyperv_host: "hv0?.empresa.local", veeam_job: "ACME - *", name_regex: "^acme-" };
   let rules = [];
   let editingRule = null;
@@ -184,9 +186,12 @@
       if (show && snmp) show = (snmp === "3") === v3;
       n.hidden = !show;
     });
-    $("l-user").textContent = USER_LABEL[kind] || "Usuário";
+    const token = kind === "vmware_vcd" && $("f-vcd-auth").value === "token";
+    $("l-user").textContent = token ? "Organização do token (System para o provedor)" : USER_LABEL[kind] || "Usuário";
+    $("l-secret").textContent = token ? "API token" : "Senha";
+    $("f-api-version").placeholder = kind === "vmware_vcd" ? "38.0" : "1.1-rev1";
     $("l-endpoint").textContent = kind === "hyperv" ? "Host ou cluster (DNS ou IP)" : "Endereço (DNS ou IP)";
-    $("f-endpoint").placeholder = { snmp: "10.0.0.1", vmware_vcenter: "vcenter.empresa.local", hyperv: "hv01.empresa.local", veeam: "veeam.empresa.local" }[kind];
+    $("f-endpoint").placeholder = { snmp: "10.0.0.1", vmware_vcenter: "vcenter.empresa.local", vmware_vcd: "vcloud.empresa.com.br", hyperv: "hv01.empresa.local", veeam: "veeam.empresa.local" }[kind];
     $("f-auth-pw").disabled = !$("f-auth-proto").value;
     $("f-priv-proto").disabled = !$("f-auth-proto").value;
     if ($("f-priv-proto").disabled) $("f-priv-proto").value = "";
@@ -223,6 +228,8 @@
     $("f-hosts").value = (o.hosts || []).join("\n");
     $("f-https").checked = o.https !== false;
     $("f-api-version").value = o.api_version || "";
+    $("f-vcd-auth").value = o.auth || "password";
+    $("f-orgs").value = (o.orgs || []).join("\n");
     $("f-timeout").value = o.timeout_ms || 2000;
     $("f-retries").value = o.retries !== undefined ? o.retries : 2;
     $("f-discovery").value = o.discovery_minutes || 15;
@@ -278,6 +285,9 @@
           hosts: $("f-hosts").value.split(/\s+/).map((h) => h.trim()).filter(Boolean) };
       } else if (kind === "veeam") {
         b.options = { api_version: $("f-api-version").value.trim() || null };
+      } else if (kind === "vmware_vcd") {
+        b.options = { api_version: $("f-api-version").value.trim() || null, auth: $("f-vcd-auth").value,
+          orgs: $("f-orgs").value.split(/\n+/).map((x) => x.trim()).filter(Boolean) };
       }
     }
     return b;
@@ -292,7 +302,7 @@
   $("f-https").addEventListener("change", () => {
     if ($("f-kind").value === "hyperv") $("f-port").value = $("f-https").checked ? 5986 : 5985;
   });
-  ["f-version", "f-auth-proto", "f-priv-proto", "f-tenant"].forEach((id) => $(id).addEventListener("change", syncKind));
+  ["f-version", "f-auth-proto", "f-priv-proto", "f-tenant", "f-vcd-auth"].forEach((id) => $(id).addEventListener("change", syncKind));
   $("filter-kind").addEventListener("change", render);
 
   $("form").addEventListener("submit", async (ev) => {

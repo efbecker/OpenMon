@@ -24,16 +24,16 @@ from openmon.db import pool
 
 router = APIRouter(prefix="/api/admin/integrations", tags=["admin"])
 
-CRED_KIND = {"vmware_vcenter": "vmware", "hyperv": "winrm", "veeam": "veeam"}
-DEFAULT_PORT = {"vmware_vcenter": 443, "hyperv": 5986, "veeam": 9419, "snmp": 161}
-DEFAULT_INTERVAL = {"vmware_vcenter": 60, "hyperv": 60, "veeam": 300, "snmp": 60}
+CRED_KIND = {"vmware_vcenter": "vmware", "vmware_vcd": "vmware", "hyperv": "winrm", "veeam": "veeam"}
+DEFAULT_PORT = {"vmware_vcenter": 443, "vmware_vcd": 443, "hyperv": 5986, "veeam": 9419, "snmp": 161}
+DEFAULT_INTERVAL = {"vmware_vcenter": 60, "vmware_vcd": 300, "hyperv": 60, "veeam": 300, "snmp": 60}
 HOST_RE = re.compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}"
                      r"[A-Za-z0-9])?$|^[0-9a-fA-F:.]+$")
 ASSET_TYPES = ("network_switch", "router", "firewall", "storage", "physical_server", "other")
 
 
 class IntegrationForm(BaseModel):
-    kind: str = Field(pattern="^(vmware_vcenter|hyperv|veeam|snmp)$")
+    kind: str = Field(pattern="^(vmware_vcenter|vmware_vcd|hyperv|veeam|snmp)$")
     name: str = Field(min_length=2, max_length=120)
     tenant_id: int
     endpoint: str = Field(min_length=1, max_length=255)
@@ -80,6 +80,15 @@ def _options(form: IntegrationForm) -> dict[str, Any]:
         return {"transport": transport, "hosts": hosts[:64], "https": o.get("https", True) is not False}
     if form.kind == "veeam":
         return {"api_version": str(o.get("api_version") or "1.1-rev1")[:20]}
+    if form.kind == "vmware_vcd":
+        version = str(o.get("api_version") or "38.0").strip()
+        if not re.match(r"^\d{2}\.\d$", version):
+            raise HTTPException(422, "Versão da API do vCloud inválida (ex.: 38.0).")
+        auth = o.get("auth") or "password"
+        if auth not in ("password", "token"):
+            raise HTTPException(422, "Autenticação do vCloud inválida.")
+        orgs = [str(x).strip() for x in (o.get("orgs") or []) if str(x).strip()]
+        return {"api": "vcd", "api_version": version, "auth": auth, "orgs": [x[:120] for x in orgs[:100]]}
     return {}
 
 
@@ -93,14 +102,16 @@ def _int(v: Any, default: int, lo: int, hi: int) -> int:
 
 def _validate(form: IntegrationForm) -> dict[str, Any]:
     endpoint = form.endpoint.strip()
-    host = re.sub(r"^https?://", "", endpoint).split("/")[0].split(":")[0] if form.kind in ("vmware_vcenter", "veeam") \
-        else endpoint
+    host = re.sub(r"^https?://", "", endpoint).split("/")[0].split(":")[0] \
+        if form.kind in ("vmware_vcenter", "vmware_vcd", "veeam") else endpoint
     if not HOST_RE.match(host):
         raise HTTPException(422, "Endereço inválido: use o nome DNS ou o IP.")
     pem = (form.ca_cert_pem or "").strip() or None
     if pem and "-----BEGIN CERTIFICATE-----" not in pem:
         raise HTTPException(422, "Certificado da CA deve estar em formato PEM.")
-    return {"kind": form.kind, "name": form.name.strip(), "tenant_id": form.tenant_id, "endpoint": host,
+    # vCloud Director é um modo da integração VMware (options.api = "vcd"): o banco não muda
+    return {"kind": "vmware_vcenter" if form.kind == "vmware_vcd" else form.kind, "name": form.name.strip(),
+            "tenant_id": form.tenant_id, "endpoint": host,
             "port": form.port or DEFAULT_PORT[form.kind], "verify_tls": form.verify_tls, "ca_cert_pem": pem,
             "poll_interval_seconds": form.poll_interval_seconds or DEFAULT_INTERVAL[form.kind],
             "is_enabled": form.is_enabled, "options": _options(form)}
@@ -136,14 +147,18 @@ def _credential(form: IntegrationForm, v: dict[str, Any], old_params: dict[str, 
                   "context": (form.context or "").strip()}
         return "snmp_v3", form.username.strip(), json.dumps({"auth_password": auth_pw, "priv_password": priv_pw}), \
             params
-    if not (form.username or "").strip():
+    username = (form.username or "").strip()
+    token = form.kind == "vmware_vcd" and v["options"].get("auth") == "token"
+    if token and not username:
+        username = "System"
+    if not username:
         raise HTTPException(422, "Informe o usuário.")
     if not form.secret:
         if old_params is not None:
             return None
-        raise HTTPException(422, "Informe a senha.")
+        raise HTTPException(422, "Informe o API token." if token else "Informe a senha.")
     kind = CRED_KIND[form.kind]
-    return kind, form.username.strip(), form.secret, {"_kind": kind}
+    return kind, username, form.secret, {"_kind": kind}
 
 
 _SELECT = """
@@ -160,9 +175,13 @@ def _json(v: Any) -> dict[str, Any]:
     return json.loads(v) if isinstance(v, str) else dict(v or {})
 
 
+def _ui_kind(kind: str, options: dict[str, Any]) -> str:
+    return "vmware_vcd" if kind == "vmware_vcenter" and options.get("api") == "vcd" else kind
+
+
 def _out(r: Any) -> dict[str, Any]:
     params = _json(r["cred_params"])
-    return {"id": r["id"], "kind": r["kind"], "name": r["name"], "tenant_id": r["tenant_id"],
+    return {"id": r["id"], "kind": _ui_kind(r["kind"], _json(r["options"])), "name": r["name"], "tenant_id": r["tenant_id"],
             "tenant_name": r["tenant_name"], "endpoint": r["endpoint"], "port": r["port"],
             "verify_tls": r["verify_tls"], "ca_cert_pem": r["ca_cert_pem"] or "", "options": _json(r["options"]),
             "poll_interval_seconds": r["poll_interval_seconds"], "is_enabled": r["is_enabled"],
@@ -247,7 +266,7 @@ async def update_integration(integration_id: int, form: IntegrationForm, request
             old = await conn.fetchrow(_SELECT + " WHERE i.id = $1", integration_id)
             if old is None:
                 raise HTTPException(404, "Integração não encontrada.")
-            if old["kind"] != v["kind"]:
+            if _ui_kind(old["kind"], _json(old["options"])) != form.kind:
                 raise HTTPException(422, "O tipo da integração não pode mudar; crie outra.")
             await _check_tenant(conn, v["tenant_id"])
             if await conn.fetchval("SELECT 1 FROM integrations WHERE kind = $1 AND lower(name) = lower($2) AND id <> $3",
