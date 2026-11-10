@@ -56,13 +56,11 @@ class DeployError(RuntimeError):
 @dataclass
 class DeployRequest:
     ssh: SshTarget
-    frontend_address: str                    # IP ou CIDR da VM 1 (liberado no pg_hba e no nftables)
+    frontend_address: str                    # IP ou CIDR da VM 1 (único liberado no pg_hba)
     db_host: str | None = None               # endereço que a VM 1 usa para o banco (padrão: ssh.host)
     pg_major: int = 17
     db_port: int = 5432
     listen_addresses: str | None = None      # padrão: 'localhost,<db_host>' (ou '*' se db_host for DNS)
-    manage_firewall: bool = True
-    ssh_allow_cidrs: list[str] = field(default_factory=list)  # vazio = não restringe a porta 22
     timescale_key_fpr: str = ""
     max_connections: int = 150
     config_dir: Path = Path("/etc/openmon/database")  # gravável pela API (ReadWritePaths)
@@ -429,8 +427,6 @@ class DatabaseDeployer:
             raise DeployError("porta do PostgreSQL inválida")
         validate_host(req.ssh.host)
         normalize_cidr(req.frontend_address)
-        for cidr in req.ssh_allow_cidrs:
-            normalize_cidr(cidr)
         if req.timescale_key_fpr and not _FPR_RE.match(req.timescale_key_fpr):
             raise DeployError("impressão digital da chave TimescaleDB deve ter 40 hexadecimais maiúsculos")
         if req.listen_addresses is not None:
@@ -445,10 +441,6 @@ class DatabaseDeployer:
         req = self.req
         db_host = result.host
         allow_cidr = normalize_cidr(req.frontend_address)
-        ssh_cidrs = [normalize_cidr(c) for c in req.ssh_allow_cidrs]
-        if ssh_cidrs and not any(ipaddress.ip_network(allow_cidr).subnet_of(ipaddress.ip_network(c))
-                                 for c in ssh_cidrs if ipaddress.ip_network(c).version == ipaddress.ip_network(allow_cidr).version):
-            ssh_cidrs.append(allow_cidr)  # nunca trancar a própria VM 1 fora do SSH
         listen = req.listen_addresses or (f"localhost,{db_host}" if is_ip(db_host) else "*")
         cn, sans = certificate_sans(db_host, pf)
 
@@ -473,8 +465,6 @@ class DatabaseDeployer:
             "CERT_SANS": sans,
             "PGDG_KEY_FPR": PGDG_KEY_FPR,
             "TIMESCALE_KEY_FPR": req.timescale_key_fpr,
-            "SSH_ALLOW_CIDRS": ",".join(ssh_cidrs),
-            "MANAGE_FIREWALL": "1" if req.manage_firewall else "0",
         })
 
         files: dict[str, bytes] = {
@@ -533,7 +523,7 @@ class DatabaseDeployer:
         except (OSError, ssl.SSLError) as exc:
             raise DeployError(
                 f"a VM 1 não conseguiu abrir TLS com {result.host}:{result.port}: {exc}. "
-                "Verifique rota, firewall e se o IP liberado é o IP de saída desta VM.") from exc
+                "Verifique a rota, o firewall externo e se o IP liberado é o IP de saída desta VM.") from exc
         self._emit("log", f"TLS {version} com certificado validado (verify-full).", 97)
         with tempfile.NamedTemporaryFile("w", suffix=".crt", delete=False) as fh:
             fh.write(result.ca_cert_pem)

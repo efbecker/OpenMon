@@ -17,14 +17,14 @@
  │ openmon-collector@veeam    Veeam REST API                            │
  │ openmon-collector@snmp     SNMP v2c/v3 (base do OpenFlow)            │
  │ openmon-backup.timer       pg_dump + configs → /var/backups/openmon  │
- │ nftables · fail2ban (auth.log) · /etc/openmon/master.key (0400)      │
+ │ fail2ban (auth.log) · /etc/openmon/master.key (0400)                 │
  └──────────────┬───────────────────────────────────────────────────────┘
                 │ PostgreSQL 5432 com TLS verify-full (scram-sha-256)
                 │ SSH 22 só para o deploy/manutenção
  ┌──────────────▼──────── VM 2 · Debian 13+ ────────────────────────────┐
  │ PostgreSQL 17 (PGDG) + TimescaleDB 2.x (repo oficial Timescale)      │
  │ hypertables + continuous aggregates + compressão + retenção 5 anos   │
- │ pg_hba: hostssl apenas da VM 1 · nftables: 5432 só para a VM 1       │
+ │ pg_hba: hostssl + scram apenas da VM 1                               │
  └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -60,7 +60,6 @@ o papel de proxy reverso e servidor dos estáticos, no padrão Debian
 | `/etc/apache2/sites-available/openmon.conf` | `root 0644` | VirtualHost 80→443 e proxy da API |
 | `/etc/apache2/conf-available/openmon-security.conf` | `root 0644` | Headers de segurança, TLS, CSP |
 | `/etc/fail2ban/filter.d/openmon-auth.conf`, `jail.d/openmon.conf` | `root 0644` | Banimento por força bruta |
-| `/etc/nftables.d/openmon-frontend.nft` | `root 0644` | Firewall da VM 1 |
 | `/etc/logrotate.d/openmon`, `/etc/tmpfiles.d/openmon.conf` | `root 0644` | Rotação de logs e diretórios |
 
 Usuário de serviço: `openmon` (sistema, sem shell, sem home útil):
@@ -82,7 +81,6 @@ somente leitura até para a própria aplicação.
 | `/var/lib/postgresql/17/main/` | Dados (padrão Debian) |
 | `/etc/apt/keyrings/{pgdg.asc,timescaledb.gpg}` | Chaves dos repositórios (conferidas por impressão digital) |
 | `/etc/apt/sources.list.d/{pgdg,timescaledb}.sources` | Repositórios no formato deb822 |
-| `/etc/nftables.d/openmon-db.nft` | Tabela `inet openmon_db`: 5432 só para a VM 1 |
 
 ## Pacotes apt
 
@@ -93,7 +91,7 @@ e [`packaging/apt/vm2-database.txt`](../packaging/apt/vm2-database.txt).
 
 | Grupo | Pacotes | Para quê |
 |---|---|---|
-| Sistema | `ca-certificates curl openssl sudo chrony nftables fail2ban logrotate zstd unattended-upgrades python3-systemd` | Base, hora certa (TLS e séries temporais), firewall, anti brute force, compressão dos backups |
+| Sistema | `ca-certificates curl openssl sudo chrony nftables fail2ban logrotate zstd unattended-upgrades python3-systemd` | Base, hora certa (TLS e séries temporais), anti brute force (o `nftables` é só o backend de banimento do Fail2ban), compressão dos backups |
 | Web | `apache2` | mod_ssl, mod_headers, mod_proxy, mod_proxy_http, mod_proxy_wstunnel e mod_http2 já vêm no pacote |
 | Python | `python3 python3-venv` | Python 3.13 |
 | API | `python3-fastapi python3-uvicorn python3-pydantic python3-multipart python3-jinja2` | API, uploads (restore), templates de relatório/e-mail |
@@ -113,7 +111,7 @@ Opcionais: `python3-certbot-apache` (Let's Encrypt), `krb5-user` + `python3-requ
 
 | Origem | Pacotes |
 |---|---|
-| Debian main | `ca-certificates curl gnupg openssl nftables chrony postgresql-common unattended-upgrades` |
+| Debian main | `ca-certificates curl gnupg openssl chrony postgresql-common unattended-upgrades` |
 | apt.postgresql.org (`trixie-pgdg`) | `postgresql-17 postgresql-client-17` |
 | packagecloud.io/timescale (`trixie`) | `timescaledb-2-postgresql-17 timescaledb-tools` |
 
@@ -160,13 +158,14 @@ Headers: HSTS (2 anos), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosnif
 CSP sem `unsafe-inline`/`unsafe-eval`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP.
 `ServerTokens Prod`, `TraceEnable Off`, TLS 1.2/1.3.
 
-## Firewall (nftables) entre as VMs
+## Firewall
 
-* VM 1 (`packaging/nftables/vm1-frontend.nft`): entrada só 80/443 e SSH das redes de
-  administração; saída para a VM 2 só nas portas 22 e 5432.
-* VM 2 (gerado pelo deploy): tabela própria `inet openmon_db` que aceita 5432 só da
-  VM 1 e descarta o resto. Opcionalmente restringe SSH (`--ssh-allow`), sempre
-  mantendo a VM 1 liberada. O deploy não apaga regras existentes de outras tabelas.
+O OpenMon não cria regras de firewall nas VMs: o ambiente fica atrás do firewall
+da rede. O PostgreSQL só aceita a VM 1, com TLS e scram-sha-256, pelo bloco
+gerenciado do `pg_hba.conf` (`hostnossl` é rejeitado). O único uso do `nftables` na
+VM 1 é como backend de banimento do Fail2ban. Instalações antigas que tinham as
+tabelas `inet openmon_frontend`/`inet openmon_db` têm essas regras removidas pelo
+instalador e pelo próximo deploy do banco.
 
 ## Dimensionamento sugerido (5.000 VMs)
 

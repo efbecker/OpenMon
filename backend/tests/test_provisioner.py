@@ -166,9 +166,12 @@ def test_full_flow_with_fake_session(monkeypatch, tmp_path):
         assert "S3nh@-SSH!" not in e.message
 
 
-def test_ssh_allow_always_includes_frontend(monkeypatch, tmp_path):
-    _, _, session = run_with_fake(monkeypatch, make_request(tmp_path, ssh_allow_cidrs=["192.168.50.0/24"]))
-    assert "SSH_ALLOW_CIDRS=192.168.50.0/24,10.0.0.10/32" in session.uploaded["params.env"].decode()
+def test_no_firewall_management(monkeypatch, tmp_path):
+    _, _, session = run_with_fake(monkeypatch, make_request(tmp_path))
+    params = session.uploaded["params.env"].decode()
+    assert "SSH_ALLOW" not in params and "FIREWALL" not in params
+    script = session.uploaded["provision_db.sh"].decode()
+    assert "nft -f" not in script and "TOTAL_STEPS=8" in script
 
 
 def test_remote_failure_is_reported(monkeypatch, tmp_path):

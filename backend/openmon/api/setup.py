@@ -123,9 +123,8 @@ class SshForm(BaseModel):
 
 class DeployForm(SshForm):
     frontend_address: str = Field(min_length=1, max_length=64)
-    ssh_allow: str | None = Field(default=None, max_length=64)
 
-    @field_validator("frontend_address", "ssh_allow")
+    @field_validator("frontend_address")
     @classmethod
     def _cidr(cls, v: str | None) -> str | None:
         if v in (None, ""):
@@ -233,7 +232,6 @@ async def start_deploy(form: DeployForm, request: Request) -> dict[str, Any]:
     req = DeployRequest(
         ssh=form.target(),
         frontend_address=form.frontend_address,
-        ssh_allow_cidrs=[form.ssh_allow] if form.ssh_allow else [],
         config_dir=config.db_config_dir(),
     )
     job.status, job.events, job.result, job.started_at = "running", [], None, time.time()

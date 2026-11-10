@@ -134,10 +134,10 @@ def main() -> int:
     assert result2.ca_cert_pem == ca_before
     print("-- 2º deploy idempotente OK")
 
-    # Firewall
-    rules = sh("docker", "exec", NAME, "nft", "list", "table", "inet", "openmon_db")
-    assert f"ip saddr {gateway}/32 accept" in rules or f"ip saddr {gateway} accept" in rules, rules
-    print("-- nftables OK")
+    # Sem firewall gerenciado pelo OpenMon (o acesso é restrito pelo pg_hba)
+    tables = sh("docker", "exec", NAME, "nft", "list", "tables")
+    assert "openmon_db" not in tables, tables
+    print("-- nenhuma regra nftables criada OK")
 
     # Chave do host trocada -> recusa antes de autenticar
     try:

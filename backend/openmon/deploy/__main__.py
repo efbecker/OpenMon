@@ -27,12 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ssh-port", type=int, default=22)
     p.add_argument("--ssh-user", default="root")
     p.add_argument("--ssh-key", type=Path, help="chave privada SSH (preferível a senha)")
-    p.add_argument("--frontend-address", required=True, help="IP/CIDR da VM 1 liberado no pg_hba e no nftables")
+    p.add_argument("--frontend-address", required=True, help="IP/CIDR da VM 1 liberado no pg_hba")
     p.add_argument("--fingerprint", help="impressão digital SSH esperada (SHA256:...); sem ela, pergunta")
     p.add_argument("--pg-major", type=int, default=17)
     p.add_argument("--db-port", type=int, default=5432)
-    p.add_argument("--ssh-allow", action="append", default=[], help="CIDR com acesso SSH à VM 2 (repetível)")
-    p.add_argument("--no-firewall", action="store_true", help="não gerenciar nftables na VM 2")
     p.add_argument("--timescale-key-fpr", default="", help="impressão digital esperada da chave apt do TimescaleDB")
     p.add_argument("--config-dir", type=Path, default=Path("/etc/openmon/database"))
     args = p.parse_args(argv)
@@ -66,8 +64,6 @@ def main(argv: list[str] | None = None) -> int:
         frontend_address=args.frontend_address,
         pg_major=args.pg_major,
         db_port=args.db_port,
-        manage_firewall=not args.no_firewall,
-        ssh_allow_cidrs=args.ssh_allow,
         timescale_key_fpr=args.timescale_key_fpr,
         config_dir=args.config_dir,
     )

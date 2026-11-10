@@ -12,7 +12,8 @@ padrões do projeto OpenFlow.
 * **Multi-tenancy estrito**: cada cliente vê só os próprios ativos, métricas, links,
   backups e relatórios; isolamento também no banco (Row-Level Security).
 * **Security by design**: cofre AES-256-GCM, Argon2id, TLS entre as VMs, CSP/HSTS,
-  `systemd` com sandbox, `nftables`, Fail2ban.
+  `systemd` com sandbox, Fail2ban. Sem firewall local: o OpenMon fica atrás do
+  firewall do ambiente e o banco só aceita a VM 1 no `pg_hba.conf`.
 
 ## Instalação em um comando
 
@@ -58,8 +59,7 @@ curl -fsSL -H "Authorization: Bearer $TOKEN" \
 ```
 </details>
 
-Outras opções: `--fqdn openmon.empresa.local`, `--admin-cidr 10.10.0.0/24`
-(ativa o nftables da VM 1), `--db-ip IP_DA_VM2`, `--new-setup-token`. Para
+Outras opções: `--fqdn openmon.empresa.local`, `--new-setup-token`. Para
 atualizar, rode o mesmo comando.
 
 > O Debian não aceita login SSH do `root` por senha por padrão
@@ -69,7 +69,7 @@ atualizar, rode o mesmo comando.
 
 | Etapa | Status |
 |---|---|
-| 1. Estrutura de diretórios (FHS), pacotes apt, units systemd, Apache2, nftables, Fail2ban | ✅ [docs/01-arquitetura-debian.md](docs/01-arquitetura-debian.md) |
+| 1. Estrutura de diretórios (FHS), pacotes apt, units systemd, Apache2, Fail2ban | ✅ [docs/01-arquitetura-debian.md](docs/01-arquitetura-debian.md) |
 | 2. Schema PostgreSQL + TimescaleDB (tenancy, cofre, ativos, hypertables, caggs, retenção) | ✅ [docs/02-banco-de-dados.md](docs/02-banco-de-dados.md) |
 | 3. Deploy remoto do banco via SSH | ✅ [docs/03-deploy-banco-ssh.md](docs/03-deploy-banco-ssh.md) |
 | 4. Assistente web do deploy do banco (token de instalação, terminal ao vivo) | ✅ |
@@ -93,7 +93,7 @@ packaging/
   apt/                     listas de pacotes das duas VMs
   apache2/                 VirtualHost e headers de segurança
   systemd/                 openmon-*.service, .timer, .path, openmon.target
-  nftables/ fail2ban/ logrotate/ tmpfiles.d/
+  fail2ban/ logrotate/ tmpfiles.d/
 scripts/install.sh         instalador one-liner da VM 1 (curl | sudo bash)
 bin/                       utilitários administrativos instalados em /opt/openmon/bin
 docs/                      arquitetura, banco e deploy

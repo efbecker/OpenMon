@@ -6,7 +6,6 @@ ca-certificates
 curl
 gnupg
 openssl
-nftables
 chrony
 postgresql-common
 unattended-upgrades

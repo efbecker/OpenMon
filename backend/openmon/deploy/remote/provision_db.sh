@@ -36,14 +36,12 @@ trap 'rc=$?; echo "::error::falha na linha $LINENO: $BASH_COMMAND (código $rc)"
 : "${PG_MAJOR:?}" "${DB_NAME:?}" "${DB_PORT:?}" "${OWNER_ROLE:?}" "${APP_ROLE:?}"
 : "${ALLOW_CIDR:?}" "${LISTEN_ADDRESSES:?}" "${CERT_SANS:?}" "${CERT_CN:?}" "${PGDG_KEY_FPR:?}"
 TIMESCALE_KEY_FPR="${TIMESCALE_KEY_FPR:-}"
-SSH_ALLOW_CIDRS="${SSH_ALLOW_CIDRS:-}"
-MANAGE_FIREWALL="${MANAGE_FIREWALL:-1}"
 
 export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C.UTF-8
 export NEEDRESTART_MODE=a
 
-TOTAL_STEPS=9
+TOTAL_STEPS=8
 step() { echo "::step::$1::$TOTAL_STEPS::$2"; }
 info() { echo "::info::$1::$2"; }
 warn() { echo "::warn::$*"; }
@@ -84,7 +82,7 @@ info arch "$ARCH"
 # -----------------------------------------------------------------------------
 step 2 "Instalando pacotes base (apt-get não interativo)"
 apt-get update -q
-apt_install ca-certificates curl gnupg openssl nftables postgresql-common
+apt_install ca-certificates curl gnupg openssl postgresql-common
 
 # -----------------------------------------------------------------------------
 step 3 "Configurando repositórios oficiais PostgreSQL (PGDG) e TimescaleDB"
@@ -351,47 +349,17 @@ done < "$WORK_DIR/sql/manifest"
 info migrations_applied "$applied"
 
 # -----------------------------------------------------------------------------
-step 8 "Configurando firewall nftables (PostgreSQL acessível só pela VM 1)"
-if [ "$MANAGE_FIREWALL" = "1" ]; then
-    install -d -m 0755 /etc/nftables.d
-    family_of() { case "$1" in *:*) echo ip6 ;; *) echo ip ;; esac; }
-    PG_FAMILY="$(family_of "$ALLOW_CIDR")"
-    {
-        echo "#!/usr/sbin/nft -f"
-        echo "# OpenMon - regras da VM 2 (geradas pelo deploy; não edite)"
-        echo "table inet openmon_db"
-        echo "delete table inet openmon_db"
-        echo "table inet openmon_db {"
-        echo "    chain input {"
-        echo "        type filter hook input priority filter - 10; policy accept;"
-        echo "        iif \"lo\" accept"
-        echo "        tcp dport ${DB_PORT} ${PG_FAMILY} saddr ${ALLOW_CIDR} accept"
-        echo "        tcp dport ${DB_PORT} counter drop"
-        if [ -n "$SSH_ALLOW_CIDRS" ]; then
-            for cidr in ${SSH_ALLOW_CIDRS//,/ }; do
-                echo "        tcp dport 22 $(family_of "$cidr") saddr ${cidr} accept"
-            done
-            echo "        tcp dport 22 counter drop"
-        fi
-        echo "    }"
-        echo "}"
-    } > /etc/nftables.d/openmon-db.nft.new
-    nft -c -f /etc/nftables.d/openmon-db.nft.new || die "regras nftables inválidas"
-    mv -f /etc/nftables.d/openmon-db.nft.new /etc/nftables.d/openmon-db.nft
-    chmod 0644 /etc/nftables.d/openmon-db.nft
-    nft -f /etc/nftables.d/openmon-db.nft
-    [ -f /etc/nftables.conf ] || printf '#!/usr/sbin/nft -f\n\nflush ruleset\n' > /etc/nftables.conf
-    grep -q '^include "/etc/nftables.d/\*.nft"' /etc/nftables.conf \
-        || printf '\n# OpenMon\ninclude "/etc/nftables.d/*.nft"\n' >> /etc/nftables.conf
-    nft -c -f /etc/nftables.conf || die "/etc/nftables.conf ficou inválido"
-    if has_systemd; then systemctl enable --quiet nftables.service; fi
-    info firewall "PostgreSQL ${DB_PORT}/tcp liberado apenas para ${ALLOW_CIDR}"
-else
-    warn "firewall não gerenciado pelo OpenMon (MANAGE_FIREWALL=0)"
+# O OpenMon não gerencia firewall (o ambiente já fica atrás de um firewall externo;
+# o acesso ao PostgreSQL é restrito pelo pg_hba.conf). Remove a tabela que versões
+# antigas do deploy criavam, se ainda existir.
+if [ -f /etc/nftables.d/openmon-db.nft ] || { command -v nft >/dev/null 2>&1 && nft list table inet openmon_db >/dev/null 2>&1; }; then
+    if command -v nft >/dev/null 2>&1; then nft delete table inet openmon_db 2>/dev/null || true; fi
+    rm -f /etc/nftables.d/openmon-db.nft
+    info firewall "regras nftables antigas do OpenMon removidas"
 fi
 
 # -----------------------------------------------------------------------------
-step 9 "Validando a instalação"
+step 8 "Validando a instalação"
 while IFS='|' read -r key value; do
     if [ -n "$key" ]; then info "$key" "$value"; fi
 done < <(psql_su -d "$DB_NAME" -tA <<'SQL'

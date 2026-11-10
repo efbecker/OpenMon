@@ -285,8 +285,7 @@
     }
     const frontend = $("frontend").value.trim();
     if (!frontend) return setError("form-error", "Informe o IP do Servidor 1.");
-    const body = { ...v, fingerprint: verified.fingerprint, frontend_address: frontend,
-                   ssh_allow: $("ssh-allow").value.trim() || null };
+    const body = { ...v, fingerprint: verified.fingerprint, frontend_address: frontend };
     try {
       clearTerminal();
       await api("POST", "/api/setup/database/deploy", body);

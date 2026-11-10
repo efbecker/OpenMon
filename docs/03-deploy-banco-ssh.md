@@ -14,7 +14,7 @@ de segurança listadas abaixo.
 | 2 | VM 2 | `preflight.sh` (somente leitura): Debian ≥ 13, arquitetura, CPUs, RAM, disco SSD/HDD, sudo |
 | 3 | VM 1 | Calcula o tuning, gera as senhas dos papéis e os **verificadores SCRAM**, monta o pacote de SQL |
 | 4 | VM 1 → 2 | SFTP para `/tmp/openmon-deploy.XXXXXXXXXX` (0700, arquivos 0600) |
-| 5 | VM 2 | `provision_db.sh` como root (`sudo -S`), 9 etapas, saída ao vivo |
+| 5 | VM 2 | `provision_db.sh` como root (`sudo -S`), 8 etapas, saída ao vivo |
 | 6 | VM 1 | Valida TLS com `verify-full` e faz login com `openmon_app` |
 | 7 | VM 1 | Grava `/etc/openmon/database.conf`, `database-owner.conf` e `pki/db-ca.crt` |
 
@@ -27,8 +27,7 @@ Etapas do `provision_db.sh` (idempotente; pode rodar de novo):
 5. CA interna + certificado do servidor (EC P-256, SAN com IP/DNS da VM 2); reemitido se os nomes mudarem ou faltarem 30 dias para vencer
 6. `conf.d/00-openmon.conf` (TLS, scram, `shared_preload_libraries`, logs), `conf.d/10-openmon-tuning.conf`, bloco gerenciado no `pg_hba.conf`; reinicia e **restaura a configuração anterior** se o PostgreSQL não subir ou se o `pg_hba` tiver erro
 7. Papéis, banco `openmon` (UTF-8, `C.UTF-8`), extensão TimescaleDB e migrations pendentes
-8. nftables: tabela `inet openmon_db` (5432 só da VM 1), persistida em `/etc/nftables.d/` e ativada no boot
-9. Validação: versões, `ssl = on`, hypertables, caggs, jobs, versão do schema
+8. Validação: versões, `ssl = on`, hypertables, caggs, jobs, versão do schema
 
 ## Segurança: o que muda em relação ao OpenFlow
 
@@ -41,7 +40,7 @@ Etapas do `provision_db.sh` (idempotente; pode rodar de novo):
 | `host all all 127.0.0.1/32 trust` e regra `md5` | Só `hostssl` + `scram-sha-256` da VM 1; `hostnossl` rejeitado |
 | Fallback silencioso sem TimescaleDB | TimescaleDB é obrigatório; sem ele o deploy falha com mensagem clara |
 | Conexão sem TLS | TLS obrigatório com CA própria e `sslmode=verify-full` |
-| Regras nft avulsas, sem persistência | Tabela própria, validada com `nft -c`, persistida e idempotente |
+| Regras nft avulsas, sem persistência | Nenhuma regra de firewall: o acesso ao 5432 é restrito pelo `pg_hba.conf` (só a VM 1, TLS + scram); o firewall é o do ambiente |
 | Banco renomeado/dados legados | Não se aplica (projeto novo) |
 
 Todas as entradas que viram shell, SQL ou arquivo de configuração (IPs, CIDRs,
@@ -80,7 +79,7 @@ Depois do `curl ... | sudo bash` na VM 1, abra `https://IP_DA_VM1/`:
    valendo depois do deploy, só para a etapa do administrador (item 5).
 2. **Formulário** igual ao do OpenFlow: IP e porta SSH do Servidor 2, usuário com
    sudo, senha e IP do Servidor 1 (preenchido sozinho pela rota até a VM 2).
-   Em "Opções avançadas": senha do sudo diferente e CIDR para restringir o SSH.
+   Em "Opções avançadas": senha do sudo, se for diferente da senha SSH.
 3. **Testar Conexão SSH**: primeiro só lê a chave do host (nenhum segredo é
    enviado) e mostra a impressão digital; ao confirmar, autentica e mostra SO,
    CPU, RAM, disco e tipo de sudo. Mudar IP, porta ou usuário invalida o teste.
@@ -104,7 +103,7 @@ o único ponto de `/etc` gravável pelo serviço (`ReadWritePaths` na unit).
 ```bash
 sudo PYTHONPATH=/opt/openmon/app python3 -m openmon.deploy \
     --db-host 10.10.0.20 --ssh-user admin --ssh-key /root/.ssh/id_ed25519 \
-    --frontend-address 10.10.0.10 --ssh-allow 10.10.0.0/24
+    --frontend-address 10.10.0.10
 ```
 
 Pelo código (FastAPI + WebSocket, como o `DatabaseDeployWizard` do OpenFlow):
@@ -131,7 +130,7 @@ Cada evento traz `kind` (`step`, `log`, `info`, `warn`, `error`, `success`),
 * `backend/tests/e2e/run_e2e.py`: deploy real via SSH (senha + `sudo -S`) contra um
   container com sshd, PostgreSQL 17.11 e TimescaleDB 2.31: dois deploys seguidos
   (idempotência), login TLS `verify-full` a partir do host, RLS, caggs, p95,
-  recusa de conexão sem TLS, regra nftables e recusa de chave SSH trocada.
+  recusa de conexão sem TLS, ausência de regras nftables e recusa de chave SSH trocada.
   Limitação: o ambiente de teste não alcança os espelhos do Debian, então o
   container usa a imagem `timescaledb-ha` (Ubuntu + pacotes PGDG/Timescale) com
   `os-release` de Debian 13 e `apt-get` simulado. As etapas 2–4 (instalação via apt

@@ -27,7 +27,7 @@
         <p>Informe o endereço e as credenciais SSH do Servidor 2 (Debian 13 ou superior). O OpenMon instala
           remotamente o PostgreSQL 17 e o TimescaleDB dos repositórios oficiais, aplica o tuning pelo hardware,
           cria o schema com hypertables, continuous aggregates e retenção de 5 anos, ativa TLS e libera o
-          banco só para este servidor no pg_hba e no nftables.</p>
+          banco só para este servidor no pg_hba.conf.</p>
       </div>
       <div class="hero-side">
         <strong>Segurança de credenciais</strong>
@@ -135,7 +135,7 @@
             <input id="password" name="password" type="password" required autocomplete="new-password">
           </label>
           <label class="field full">
-            <span class="label">IP do Servidor 1 (liberação exclusiva no firewall e no pg_hba.conf)</span>
+            <span class="label">IP do Servidor 1 (único liberado no pg_hba.conf do banco)</span>
             <input id="frontend" name="frontend" required placeholder="detectado automaticamente" spellcheck="false">
           </label>
         </div>
@@ -143,13 +143,9 @@
         <details class="advanced">
           <summary>Opções avançadas</summary>
           <div class="grid">
-            <label class="field wide">
+            <label class="field full">
               <span class="label">Senha do sudo (se for diferente da senha SSH)</span>
               <input id="sudo-password" type="password" autocomplete="new-password">
-            </label>
-            <label class="field">
-              <span class="label">Restringir SSH do Servidor 2 a (CIDR)</span>
-              <input id="ssh-allow" placeholder="ex.: 10.10.0.0/24" spellcheck="false">
             </label>
           </div>
         </details>

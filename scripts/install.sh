@@ -17,8 +17,6 @@
 #
 # Opções (também aceitas como variáveis de ambiente OPENMON_*):
 #   --fqdn NOME             nome do site no Apache (padrão: hostname -f)
-#   --admin-cidr CIDR       ativa o nftables da VM 1 liberando SSH só para este CIDR
-#   --db-ip IP              IP da VM 2, para o nftables da VM 1 limitar a saída até ela
 #   --new-setup-token       gera um novo token de instalação (refazer o deploy do banco)
 #   --ref REF               branch/tag/commit do GitHub (padrão: main)
 # =============================================================================
@@ -34,17 +32,13 @@ LOG_DIR="/var/log/openmon"
 BACKUP_DIR="/var/backups/openmon"
 
 REF="${OPENMON_REF:-main}"
-DB_IP="${OPENMON_DB_IP:-}"
 FQDN="${OPENMON_FQDN:-}"
-ADMIN_CIDR="${OPENMON_ADMIN_CIDR:-}"
 NEW_SETUP_TOKEN="${OPENMON_NEW_SETUP_TOKEN:-0}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --db-ip) DB_IP="$2"; shift ;;
         --fqdn) FQDN="$2"; shift ;;
-        --admin-cidr) ADMIN_CIDR="$2"; shift ;;
         --ref) REF="$2"; shift ;;
         --new-setup-token) NEW_SETUP_TOKEN=1 ;;
         -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null || true; exit 0 ;;
@@ -233,7 +227,9 @@ sed -i "s/__VERSION__/${COMMIT:-$REF}/g" "$WEB_DIR"/*.html
 chown -R root:root "$WEB_DIR"
 chmod -R u=rwX,go=rX "$WEB_DIR"
 a2enmod -q ssl headers proxy proxy_http proxy_wstunnel rewrite http2 >/dev/null
-a2enconf -q openmon-security >/dev/null
+# ServerName global: evita os avisos AH00557/AH00558 quando o hostname não resolve
+echo "ServerName localhost" > /etc/apache2/conf-available/openmon-servername.conf
+a2enconf -q openmon-security openmon-servername >/dev/null
 a2dissite -q 000-default >/dev/null 2>&1 || true
 a2ensite -q openmon >/dev/null
 apache2ctl configtest
@@ -295,26 +291,12 @@ systemctl enable --quiet openmon.target 2>/dev/null || true
 ok "units instaladas em /etc/systemd/system"
 [ ${#PENDING[@]} -eq 0 ] || warn "serviços instalados, mas ainda sem código nesta versão (serão ativados ao atualizar): ${PENDING[*]}"
 
-# -----------------------------------------------------------------------------
-step "Firewall nftables da VM 1"
-if [ -n "$ADMIN_CIDR" ]; then
-    [[ "$ADMIN_CIDR" =~ ^[0-9.]+/[0-9]{1,2}$ ]] || die "--admin-cidr deve ser um CIDR IPv4 (ex.: 10.10.0.0/24)"
-    install -d -m 0755 /etc/nftables.d
-    DB_SET="${DB_IP:-}"
-    {
-        sed -e "s|elements = { 10.10.0.0/24 }|elements = { ${ADMIN_CIDR} }|" "$APP_DIR/packaging/nftables/vm1-frontend.nft" |
-        if [[ "$DB_SET" =~ ^[0-9.]+$ ]]; then sed "s|elements = { 10.10.0.20 }|elements = { ${DB_SET} }|"; else sed '/set db_v4 {/,/^    }/d; /@db_v4/d'; fi
-    } > /etc/nftables.d/openmon-frontend.nft.new
-    nft -c -f /etc/nftables.d/openmon-frontend.nft.new || die "regras nftables inválidas"
-    mv -f /etc/nftables.d/openmon-frontend.nft.new /etc/nftables.d/openmon-frontend.nft
-    grep -q '^include "/etc/nftables.d/\*.nft"' /etc/nftables.conf 2>/dev/null \
-        || printf '\n# OpenMon\ninclude "/etc/nftables.d/*.nft"\n' >> /etc/nftables.conf
-    nft -c -f /etc/nftables.conf || die "/etc/nftables.conf ficou inválido"
-    nft -f /etc/nftables.d/openmon-frontend.nft
-    systemctl enable --quiet nftables
-    ok "entrada: 80/443 para todos, SSH só de ${ADMIN_CIDR}"
-else
-    warn "firewall da VM 1 não alterado (use --admin-cidr 10.10.0.0/24 para ativar sem risco de perder o SSH)"
+# Sem firewall local: o OpenMon fica atrás do firewall do ambiente. Remove as
+# regras que versões antigas do instalador podiam ter criado.
+if [ -f /etc/nftables.d/openmon-frontend.nft ]; then
+    nft delete table inet openmon_frontend 2>/dev/null || true
+    rm -f /etc/nftables.d/openmon-frontend.nft
+    ok "regras nftables antigas do OpenMon removidas"
 fi
 
 # -----------------------------------------------------------------------------

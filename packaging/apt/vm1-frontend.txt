@@ -8,7 +8,7 @@ curl
 openssl
 sudo
 chrony
-nftables
+nftables   # só como backend de banimento do Fail2ban (o OpenMon não cria regras de firewall)
 fail2ban
 python3-systemd
 logrotate
