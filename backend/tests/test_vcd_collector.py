@@ -21,6 +21,18 @@ def vdc(uid, org, name, **kw):
             "memoryAllocationMB": 65536, "memoryUsedMB": 49152, "storageLimitMB": 0, "numberOfVMs": 2, **kw}
 
 
+DISKS_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<RasdItemsList xmlns="http://www.vmware.com/vcloud/v1.5" xmlns:vcloud="http://www.vmware.com/vcloud/v1.5"
+    xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData">
+  <Item><rasd:ElementName>SCSI Controller 0</rasd:ElementName><rasd:ResourceType>6</rasd:ResourceType></Item>
+  <Item><rasd:ElementName>Hard disk 1</rasd:ElementName>
+    <rasd:HostResource vcloud:capacity="20480" vcloud:storageProfileHref="x"></rasd:HostResource>
+    <rasd:ResourceType>17</rasd:ResourceType></Item>
+  <Item><rasd:ElementName>Hard disk 2</rasd:ElementName><rasd:HostResource></rasd:HostResource>
+    <rasd:ResourceType>17</rasd:ResourceType><rasd:VirtualQuantity>10737418240</rasd:VirtualQuantity></Item>
+</RasdItemsList>"""
+
+
 class FakeVcd:
     """O suficiente da API do Cloud Director 10.5 (versão 38.0) para a coleta."""
 
@@ -35,6 +47,9 @@ class FakeVcd:
         self.vms = [self.vm(i, "v1" if i < 200 else "v2") for i in range(260)]
         self.vms[0]["status"] = "POWERED_OFF"
         self.metrics_status = 200
+        self.disk_reads = 0
+        for i in range(10, 20):
+            self.vms[i].pop("totalStorageAllocatedMb")
         for m in self.vms[:10]:  # o vCD 10.5 manda a data na VM; sem ela vale a da vApp
             m["dateCreated"] = "2022-12-15T10:00:00.000-03:00"
         self.vapps = [{"href": f"{B}/api/vApp/vapp-{n}", "name": f"vapp-{n}", "creationDate": d}
@@ -71,7 +86,9 @@ class FakeVcd:
             data = {"adminOrgVdc": self.vdcs, "adminOrgVdcStorageProfile": self.sps, "adminVM": self.vms,
                     "adminVApp": self.vapps}[q["type"]]
             if q.get("filter"):
-                assert q["filter"] == "isVAppTemplate==false"
+                assert q["filter"] in ("isVAppTemplate==false", "isVAppTemplate==false;status==POWERED_ON")
+                if "POWERED_ON" in q["filter"]:
+                    data = [r for r in data if r["status"] == "POWERED_ON"]
             page, size = int(q["page"]), int(q["pageSize"])
             assert size <= 128
             return httpx.Response(200, json={"total": len(data), "page": page, "pageSize": size,
@@ -83,6 +100,15 @@ class FakeVcd:
             i = int(path.split("/")[3][3:])
             if i == 7:  # VM sem VMware Tools: o vCD responde sem métricas
                 return httpx.Response(200, json={"metric": []})
+            if 10 <= i < 20:  # vCD que não manda espaço em disco nas métricas (visto em produção)
+                return httpx.Response(200, json={"metric": [
+                    {"name": "cpu.usage.average", "unit": "PERCENT", "value": 12.5},
+                    {"name": "disk.provisioned.latest", "unit": "KILOBYTE", "value": -1},
+                    {"name": "disk.read.average", "unit": "KILOBYTES_PER_SECOND", "value": 10}]})
+            if i == 3:  # um registro por disco
+                return httpx.Response(200, json={"metric": [
+                    {"name": "disk.used.latest", "unit": "KILOBYTE", "value": 1048576},
+                    {"name": "disk.used.latest", "unit": "KILOBYTE", "value": 2097152}]})
             return httpx.Response(200, json={"metric": [
                 {"name": "cpu.usage.average", "unit": "PERCENT", "value": 12.5},
                 {"name": "cpu.usagemhz.average", "unit": "MEGAHERTZ", "value": 600.0},
@@ -91,6 +117,10 @@ class FakeVcd:
                 {"name": "disk.used.latest", "unit": "KILOBYTE", "value": 10485760},
                 {"name": "disk.read.average", "unit": "KILOBYTES_PER_SECOND", "value": 100},
                 {"name": "disk.write.average", "unit": "KILOBYTES_PER_SECOND", "value": "x"}]})
+        if path.startswith("/api/vApp/vm-") and path.endswith("/virtualHardwareSection/disks"):
+            assert request.headers["accept"] == "application/*+xml;version=38.0"
+            self.disk_reads += 1
+            return httpx.Response(200, text=DISKS_XML)
         return httpx.Response(404, json={"message": "not found"})
 
 
@@ -103,6 +133,7 @@ def fake(tmp_path, monkeypatch):
     sql("DELETE FROM integrations")
     f = FakeVcd()
     monkeypatch.setattr(vcd, "_transport", httpx.MockTransport(f.handler))
+    vcd._disk_cache.clear()
     yield f
     vault.reset()
 
@@ -123,6 +154,9 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
     assert not bad["ok"] and "recusados" in bad["error"]
     ok = client.post("/api/admin/integrations/test", json=body(provider), headers=h(csrf)).json()
     assert ok["ok"] and "3 organização(ões) · 3 VDC(s) · 260 VM(s)" in ok["summary"], ok
+    d = ok["details"]
+    assert d["vm_exemplo"] == "vm-v1-1" and d["campos_disco"] == {"totalStorageAllocatedMb": 40960}
+    assert "disk.used.latest" in d["metricas"] and d["disco_pelo_hardware"] == 30 * 1024 ** 3
 
     # Só POLLUX e ACME (filtro de organizações); a regra manda POLLUX para o tenant do cliente
     integ = client.post("/api/admin/integrations", json=body(provider, options={"orgs": ["pollux", "AC*"]}),
@@ -133,7 +167,7 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
     client.post("/api/admin/tenant-rules", json={"tenant_id": pollux["id"], "match_field": "folder",
                                                  "pattern": "POLLUX", "priority": 10}, headers=h(csrf))
     out = client.post(f"/api/admin/integrations/{integ['id']}/poll", headers=h(csrf)).json()
-    assert out["status"] == "ok" and "2 organização(ões), 2 VDC(s), 260 VM(s) (259 ligada(s), 258 com métricas)" in out["message"], out
+    assert out["status"] == "ok" and "2 organização(ões), 2 VDC(s), 260 VM(s) (259 ligada(s), 258 com métricas, 248 com disco usado)" in out["message"], out
     assert ("DELETE", "/cloudapi/1.0.0/sessions/current") in fake.calls
 
     by_tenant = dict(sql("SELECT t.slug, count(*) FROM assets a JOIN tenants t ON t.id = a.tenant_id "
@@ -158,6 +192,15 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
         ids = {r[0] for r in sql("SELECT m.metric_id FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
                                  "WHERE a.name = %s", name)}
         assert 1 not in ids and 20 in ids and 4 in ids, (name, ids)
+    # Sem espaço nas métricas nem no Query Service: provisionado pelo hardware virtual (20 GB + 10 GB)
+    vm12 = dict(sql("SELECT m.metric_id, m.value FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
+                    "WHERE a.name = 'vm-v1-12'"))
+    assert vm12[20] == 30 * 1024 ** 3 and 21 not in vm12 and vm12[1] == 12.5, vm12
+    assert fake.disk_reads == 11  # 10 na coleta + 1 do diagnóstico em Testar conexão
+    # Um registro por disco: soma
+    vm3 = dict(sql("SELECT m.metric_id, m.value FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
+                   "WHERE a.name = 'vm-v1-3'"))
+    assert vm3[21] == 3 * 1024 ** 3 and vm3[20] == 40 * 1024 ** 3
     # Só VMs das organizações escolhidas (OUTRO fica de fora) e ligadas
     asked = {p for _, p in fake.calls if p.endswith("/metrics/current")}
     assert len(asked) == 259 and "/api/vApp/vm-0000/metrics/current" not in asked
@@ -174,6 +217,7 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
     fake.vms.pop()
     out = client.post(f"/api/admin/integrations/{integ['id']}/poll", headers=h(csrf)).json()
     assert "1 removido(s)" in out["message"], out
+    assert fake.disk_reads == 11  # hardware em cache (6 h)
 
     # Conta sem o direito de ver métricas: a coleta segue com o inventário e avisa
     fake.metrics_status = 403

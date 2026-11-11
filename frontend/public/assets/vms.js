@@ -275,7 +275,8 @@
       return stat(label, bytes(s.stats.last), `${diff >= 0 ? "+" : "−"}${bytes(Math.abs(diff))} no período`);
     };
     $("d-stats").replaceChildren(...[st("cpu.usage.pct", "CPU média", "%"), st("mem.usage.pct", "Memória média", "%"),
-      growth("disk.used.bytes", "Disco usado"), growth("storage.used.bytes", "Armazenamento usado"),
+      growth("disk.used.bytes", "Disco usado") || growth("disk.capacity.bytes", "Disco provisionado"),
+      growth("storage.used.bytes", "Armazenamento usado"),
       st("net.rx.bps", "Rede recebida", "bit/s"), st("net.tx.bps", "Rede enviada", "bit/s")].filter(Boolean));
     destroyCharts();
     const showPeak = d.bucket_seconds > 60;

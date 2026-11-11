@@ -37,6 +37,12 @@ O Query Service do vCD só traz alocação. O uso real vem de
 * `options.vm_metrics = false` desliga essa parte (só inventário);
 * VMs sem VMware Tools ou recém-ligadas podem vir sem dado; ficam só com a alocação naquela coleta.
 
+Disco: o provisionado vem de `disk.provisioned.latest`, ou do `totalStorageAllocatedMb` do Query Service, ou,
+se nenhum dos dois vier, do hardware virtual (`/api/vApp/vm-<id>/virtualHardwareSection/disks`, soma dos discos,
+relido a cada 6 h). O espaço usado só existe se o vCD mandar `disk.used.latest`; quando não manda, cadastre o
+vCenter por baixo. O botão **Testar conexão** da integração mostra, para uma VM ligada, os campos de disco e
+os nomes das métricas que este vCD devolve.
+
 Rede por VM depende da versão do vCD. Se não vier, cadastre também o vCenter por baixo.
 
 ## Onde fica guardado (camadas)
