@@ -12,6 +12,8 @@
     const data = await boot();
     if (!data) return;
     const u = data.user;
+    // Cliente cai direto no painel de consumo
+    if (u.role === "client" && !new URLSearchParams(location.search).has("inicio")) { location.replace("/painel.html"); return; }
     const name = u.display_name || u.username;
     $("welcome").textContent = `Bem-vindo ao OpenMon, ${name}`;
     $("session-exp").textContent = data.expires_at ? `Sessão expira em ${when(data.expires_at)} (ou após 30 min sem uso)` : "";

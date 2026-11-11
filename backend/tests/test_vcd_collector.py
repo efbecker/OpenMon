@@ -35,12 +35,17 @@ class FakeVcd:
         self.vms = [self.vm(i, "v1" if i < 200 else "v2") for i in range(260)]
         self.vms[0]["status"] = "POWERED_OFF"
         self.metrics_status = 200
+        for m in self.vms[:10]:  # o vCD 10.5 manda a data na VM; sem ela vale a da vApp
+            m["dateCreated"] = "2022-12-15T10:00:00.000-03:00"
+        self.vapps = [{"href": f"{B}/api/vApp/vapp-{n}", "name": f"vapp-{n}", "creationDate": d}
+                      for n, d in enumerate(("2023-01-10T09:00:00.000Z", "2024-06-01T09:00:00.000Z",
+                                             "2025-03-05T09:00:00.000Z", "2026-02-20T09:00:00.000Z"))]
 
     @staticmethod
     def vm(i, v):
         return {"href": f"{B}/api/vApp/vm-{i:04d}", "name": f"vm-{v}-{i}", "vdc": f"{B}/api/vdc/{v}",
                 "status": "POWERED_ON", "numberOfCpus": 2, "memoryMB": 4096, "guestOs": "Ubuntu Linux (64-bit)",
-                "ipAddress": f"10.0.{i // 250}.{i % 250 + 1}", "containerName": "vapp-1", "isVAppTemplate": False,
+                "ipAddress": f"10.0.{i // 250}.{i % 250 + 1}", "containerName": f"vapp-{i % 4}", "container": f"{B}/api/vApp/vapp-{i % 4}", "isVAppTemplate": False,
                 "totalStorageAllocatedMb": 40960, "moref": f"vm-{1000 + i}"}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -63,7 +68,8 @@ class FakeVcd:
         if path == "/api/query":
             assert request.headers["accept"] == "application/*+json;version=38.0"
             q = request.url.params
-            data = {"adminOrgVdc": self.vdcs, "adminOrgVdcStorageProfile": self.sps, "adminVM": self.vms}[q["type"]]
+            data = {"adminOrgVdc": self.vdcs, "adminOrgVdcStorageProfile": self.sps, "adminVM": self.vms,
+                    "adminVApp": self.vapps}[q["type"]]
             if q.get("filter"):
                 assert q["filter"] == "isVAppTemplate==false"
             page, size = int(q["page"]), int(q["pageSize"])

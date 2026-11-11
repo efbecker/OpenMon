@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Painel</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/vendor/chart.umd.js?v=__VERSION__" defer></script>
+  <script src="assets/charts.js?v=__VERSION__" defer></script>
+  <script src="assets/painel.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/painel.html" class="active" aria-current="page">Painel</a>
+        <a href="/relatorios.html">Relatórios</a>
+        <a href="/alertas.html">Alertas</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+        <a href="/https.html" data-nav="admin">HTTPS</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+    <main class="page wide" id="main" hidden>
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2 id="title">Painel de consumo</h2>
+          <p class="muted small" id="subtitle">Recursos contratados no data center virtual, quanto está em uso agora e como o
+            consumo evoluiu no período.</p>
+        </div>
+        <div class="head-actions">
+          <select class="filter" id="tenant" aria-label="Cliente" hidden></select>
+          <div class="seg" id="range" role="group" aria-label="Período">
+            <button type="button" data-days="1">24 h</button>
+            <button type="button" data-days="7">7 dias</button>
+            <button type="button" data-days="30" class="on">30 dias</button>
+            <button type="button" data-days="90">90 dias</button>
+            <button type="button" data-days="365">12 meses</button>
+          </div>
+          <a class="btn ghost small-btn" id="to-report" href="/relatorios.html">Relatórios</a>
+        </div>
+      </div>
+      <p class="error-text" id="error" hidden></p>
+      <div class="meters" id="meters"></div>
+      <div class="stats" id="totals"></div>
+      <p class="muted small" id="no-vdc" hidden>Este cliente não tem data center virtual (vCloud) no inventário: não há
+        contrato de CPU, memória e armazenamento para comparar. Abaixo estão as VMs e os recursos alocados a elas.</p>
+    </section>
+
+    <section class="card" id="usage-card" hidden>
+      <div class="section-head">
+        <div>
+          <h2>Consumo no período</h2>
+          <p class="muted small" id="usage-sub"></p>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <figure class="chart-panel">
+          <figcaption><strong>CPU</strong> <span class="muted small">em % do contratado</span></figcaption>
+          <div class="chart-box"><canvas id="ch-cpu" role="img" aria-label="Uso de CPU em relação ao contratado"></canvas></div>
+          <div class="chart-stats" id="st-cpu"></div>
+        </figure>
+        <figure class="chart-panel">
+          <figcaption><strong>Memória</strong> <span class="muted small">em uso x contratada</span></figcaption>
+          <div class="chart-box"><canvas id="ch-mem" role="img" aria-label="Memória em uso e contratada"></canvas></div>
+          <div class="chart-stats" id="st-mem"></div>
+        </figure>
+        <figure class="chart-panel">
+          <figcaption><strong>Armazenamento</strong> <span class="muted small">em uso x limite</span></figcaption>
+          <div class="chart-box"><canvas id="ch-sto" role="img" aria-label="Armazenamento em uso e limite"></canvas></div>
+          <div class="chart-stats" id="st-sto"></div>
+        </figure>
+      </div>
+      <p class="muted small" id="usage-empty" hidden>Ainda não há leituras neste período. O histórico começa na primeira
+        coleta depois que o data center virtual foi associado a este cliente.</p>
+    </section>
+
+    <section class="card" id="vdc-card" hidden>
+      <h2>Data centers virtuais</h2>
+      <p class="muted small">Contratado (alocação do VDC) e em uso na última coleta, com os perfis de armazenamento.</p>
+      <div class="table-wrap">
+        <table class="table" id="vdcs">
+          <thead><tr><th>Data center virtual</th><th>CPU</th><th>Memória</th><th>Armazenamento</th><th>VMs ligadas</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="top-card" hidden>
+      <h2>VMs mais exigidas no período</h2>
+      <p class="muted small">Uso médio e pico de CPU e de memória de cada VM.</p>
+      <div class="grid inner">
+        <div class="table-wrap"><table class="table" id="top-cpu">
+          <thead><tr><th>VM</th><th>CPU média</th><th>Pico</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-wrap"><table class="table" id="top-mem">
+          <thead><tr><th>VM</th><th>Memória média</th><th>Pico</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <h2>Máquinas virtuais <span class="count" id="vm-count"></span></h2>
+          <p class="muted small">Recursos alocados a cada VM e a leitura mais recente.</p>
+        </div>
+        <div class="head-actions">
+          <input class="filter" id="vm-q" type="search" maxlength="100" placeholder="Buscar VM" aria-label="Buscar VM">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="vms">
+          <thead><tr><th>Máquina virtual</th><th>Sistema operacional</th><th>vCPU</th><th>Memória</th><th>Disco</th>
+            <th>CPU</th><th>Memória em uso</th><th>Criada em</th><th>Estado</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="vm-empty" hidden>Nenhuma VM.</p>
+      <button type="button" class="btn ghost small-btn mt" id="vm-more" hidden></button>
+    </section>
+  </main>
+</body>
+</html>
