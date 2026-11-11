@@ -3,10 +3,14 @@
 Leitura: ``assets.view`` (todos os perfis; Cliente só vê os próprios tenants).
 Mudar tenant de ativo/interface, monitorar interface e marcar link de cliente:
 ``integrations.manage`` (Administrador global).
+
+Séries de um ativo por período (gráficos de VM, host, datastore, VDC): ``GET /api/assets/{id}/metrics``,
+que escolhe a camada (bruto, horária, diária) pelo tamanho e pela idade do período. Ver docs/10-metricas-vms.md.
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,7 +22,8 @@ from openmon.db import pool
 
 router = APIRouter(prefix="/api", tags=["assets"])
 
-LATEST = {1: "cpu_pct", 10: "mem_pct", 30: "net_rx_bps", 31: "net_tx_bps", 40: "up", 41: "uptime_s",
+LATEST = {1: "cpu_pct", 10: "mem_pct", 11: "mem_used", 20: "disk_capacity", 21: "disk_used", 26: "disk_read_bps",
+          27: "disk_write_bps", 30: "net_rx_bps", 31: "net_tx_bps", 40: "up", 41: "uptime_s",
           50: "storage_capacity", 51: "storage_free"}
 
 
@@ -85,7 +90,9 @@ async def list_assets(tenant_id: int | None = None, integration_id: int | None =
                     "last_seen_at": _iso(r["last_seen_at"]), "deleted_at": _iso(r["deleted_at"]),
                     "interfaces": r["interfaces"], "latest": latest.get(r["id"], {}),
                     "attributes": {k: attrs[k] for k in ("vcpu", "memory_bytes", "guest_os", "power_state",
-                                                         "sys_descr", "location", "capacity_bytes", "free_bytes")
+                                                         "sys_descr", "location", "capacity_bytes", "free_bytes",
+                                                         "hypervisor", "org", "vdc", "vapp", "cluster", "host",
+                                                         "folder")
                                    if k in attrs}})
     summary: dict[str, dict[str, int]] = {}
     for c in counts:
@@ -204,3 +211,136 @@ async def update_interface(interface_id: int, form: InterfaceUpdate, request: Re
     except pool.DatabaseUnavailable as exc:
         raise _db_error(exc) from exc
     return {"ok": True}
+
+
+# ----------------------------------------------------------------------------------------------- séries por período
+PERIODS = {"1h": timedelta(hours=1), "6h": timedelta(hours=6), "24h": timedelta(days=1), "7d": timedelta(days=7),
+           "30d": timedelta(days=30), "90d": timedelta(days=90), "180d": timedelta(days=180),
+           "365d": timedelta(days=365), "730d": timedelta(days=730), "1825d": timedelta(days=1825)}
+MAX_POINTS = 480
+# Idade máxima de cada camada (um pouco abaixo da retenção padrão de 35 dias / 25 meses)
+RAW_MAX_SPAN, RAW_MAX_AGE = timedelta(days=2), timedelta(days=34)
+HOURLY_MAX_SPAN, HOURLY_MAX_AGE = timedelta(days=90), timedelta(days=750)
+RAW_BUCKETS = (60, 300, 900, 1800, 3600)
+HOURLY_BUCKETS = (3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400)
+DAILY_BUCKETS = (86400, 7 * 86400, 30 * 86400)
+
+
+def choose_tier(start: datetime, end: datetime, now: datetime | None = None) -> tuple[str, int]:
+    """Camada e tamanho do balde (s) para o período: ~MAX_POINTS pontos no máximo por série.
+
+    Até 2 dias (e começo nos últimos 34 dias): bruto; até 90 dias (e nos últimos ~25 meses): horária; acima: diária.
+    """
+    now = now or datetime.now(timezone.utc)
+    span = end - start
+    age = now - start
+    if span <= RAW_MAX_SPAN and age <= RAW_MAX_AGE:
+        tier, options = "raw", RAW_BUCKETS
+    elif span <= HOURLY_MAX_SPAN and age <= HOURLY_MAX_AGE:
+        tier, options = "hourly", HOURLY_BUCKETS
+    else:
+        tier, options = "daily", DAILY_BUCKETS
+    want = span.total_seconds() / MAX_POINTS
+    bucket = next((b for b in options if b >= want), options[-1])
+    return tier, bucket
+
+
+SERIES_SQL = {
+    "raw": """SELECT public.time_bucket(make_interval(secs => $5), time) AS t, metric_id,
+                     avg(value) AS avg, min(value) AS min, max(value) AS max
+                FROM v_metric_samples
+               WHERE asset_id = $1 AND time >= $2 AND time < $3 AND ($4::smallint[] IS NULL OR metric_id = ANY($4))
+               GROUP BY 1, 2 ORDER BY 2, 1""",
+    "hourly": """SELECT public.time_bucket(make_interval(secs => $5), bucket) AS t, metric_id,
+                        sum(avg_value * samples) / nullif(sum(samples), 0) AS avg,
+                        min(min_value) AS min, max(max_value) AS max
+                   FROM v_metric_hourly
+                  WHERE asset_id = $1 AND bucket >= $2 AND bucket < $3
+                    AND ($4::smallint[] IS NULL OR metric_id = ANY($4))
+                  GROUP BY 1, 2 ORDER BY 2, 1""",
+    "daily": """SELECT public.time_bucket(make_interval(secs => $5), bucket) AS t, metric_id,
+                       sum(avg_value * samples) / nullif(sum(samples), 0) AS avg,
+                       min(min_value) AS min, max(max_value) AS max
+                  FROM v_metric_daily
+                 WHERE asset_id = $1 AND bucket >= $2 AND bucket < $3
+                   AND ($4::smallint[] IS NULL OR metric_id = ANY($4))
+                 GROUP BY 1, 2 ORDER BY 2, 1""",
+}
+
+
+def _parse_time(v: str | None, name: str) -> datetime | None:
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(422, f"Data inválida em {name}: use ISO 8601 (ex.: 2026-11-01T00:00:00Z).") from exc
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+@router.get("/assets/{asset_id}/metrics")
+async def asset_metrics(asset_id: int, period: str | None = Query(default=None, max_length=8),
+                        start: str | None = Query(default=None, alias="from", max_length=40),
+                        end: str | None = Query(default=None, alias="to", max_length=40),
+                        keys: str | None = Query(default=None, max_length=1000),
+                        session: SessionInfo = Depends(require_permission("assets.view"))) -> dict[str, Any]:
+    """Séries do ativo no período: por métrica, pontos [epoch_ms, média, mínimo, máximo] e o resumo do período.
+
+    ``period`` (1h, 6h, 24h, 7d, 30d, 90d, 180d, 365d, 730d, 1825d) ou ``from``/``to`` em ISO 8601;
+    ``keys`` filtra métricas (``cpu.usage.pct,mem.usage.pct``). O tenant vem da sessão: ativo de outro cliente
+    dá 404, e as views ``v_metric_*`` só devolvem amostras gravadas com um tenant visível.
+    """
+    now = datetime.now(timezone.utc)
+    t_end = _parse_time(end, "to") or now
+    t_start = _parse_time(start, "from")
+    if t_start is None:
+        if period and period not in PERIODS:
+            raise HTTPException(422, f"Período inválido. Use um destes: {', '.join(PERIODS)}.")
+        t_start = t_end - PERIODS[period or "24h"]
+    if t_start >= t_end:
+        raise HTTPException(422, "O início do período precisa ser antes do fim.")
+    if t_end - t_start > timedelta(days=1830):
+        raise HTTPException(422, "Período máximo: 5 anos.")
+    tier, bucket = choose_tier(t_start, t_end, now)
+    try:
+        async with session.db() as conn:
+            a = await conn.fetchrow(
+                """SELECT a.id, a.name, a.asset_type, a.status, a.tenant_id, t.name AS tenant_name, a.attributes
+                     FROM assets a JOIN tenants t ON t.id = a.tenant_id WHERE a.id = $1""", asset_id)
+            if a is None:
+                raise HTTPException(404, "Ativo não encontrado.")
+            defs = {r["id"]: r for r in await conn.fetch(
+                "SELECT id, key, name, unit, category, value_kind FROM metric_definitions")}
+            ids = None
+            if keys:
+                by_key = {d["key"]: i for i, d in defs.items()}
+                wanted = [k.strip() for k in keys.split(",") if k.strip()]
+                unknown = [k for k in wanted if k not in by_key]
+                if unknown:
+                    raise HTTPException(422, f"Métrica desconhecida: {', '.join(unknown[:5])}.")
+                ids = [by_key[k] for k in wanted]
+            rows = await conn.fetch(SERIES_SQL[tier], asset_id, t_start, t_end, ids, float(bucket))
+    except pool.DatabaseUnavailable as exc:
+        raise _db_error(exc) from exc
+    series: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        mid = r["metric_id"]
+        d = defs.get(mid)
+        if d is None or r["avg"] is None:
+            continue
+        s = series.setdefault(mid, {"key": d["key"], "name": d["name"], "unit": d["unit"], "category": d["category"],
+                                    "kind": d["value_kind"], "points": []})
+        s["points"].append([int(r["t"].timestamp() * 1000), r["avg"], r["min"], r["max"]])
+    out = []
+    for mid in sorted(series):
+        s = series[mid]
+        pts = s["points"]
+        s["stats"] = {"avg": sum(p[1] for p in pts) / len(pts), "min": min(p[2] for p in pts),
+                      "max": max(p[3] for p in pts), "last": pts[-1][1], "first": pts[0][1]}
+        out.append(s)
+    attrs = _json(a["attributes"])
+    return {"asset": {"id": a["id"], "name": a["name"], "asset_type": a["asset_type"], "status": a["status"],
+                      "tenant_id": a["tenant_id"], "tenant_name": a["tenant_name"],
+                      "vcpu": attrs.get("vcpu"), "memory_bytes": attrs.get("memory_bytes")},
+            "from": t_start.isoformat(), "to": t_end.isoformat(), "tier": tier, "bucket_seconds": bucket,
+            "series": out}

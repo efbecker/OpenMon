@@ -11,11 +11,14 @@ muda: o vCD é a camada de nuvem sobre o vCenter). A cada coleta:
   armazenamento um "datastore" com limite e uso, cada VM um "vm" com vCPU, RAM e disco;
 * o tenant sai das regras: o campo "Pasta / organização" casa com ``Org`` e ``Org/VDC``.
 
-O vCD não expõe uso real de CPU/memória por VM no Query Service; para isso, cadastre
-também o vCenter por baixo (as VMs aparecem nas duas integrações).
+* uso real por VM ligada (CPU, memória, disco, throughput de disco e, quando o vCD expõe,
+  rede) vem de ``/api/vApp/vm-<id>/metrics/current``, várias VMs em paralelo. Desligue com
+  ``options.vm_metrics = false``; a concorrência é ``options.metrics_concurrency`` (padrão 16).
+  A conta precisa do direito "View VM metrics"; sem ele a coleta segue só com o inventário.
 """
 from __future__ import annotations
 
+import asyncio
 import fnmatch
 import ssl
 from typing import Any
@@ -27,6 +30,13 @@ from openmon.collector.common import CollectorError, Integration, Writer
 API_VERSION = "38.0"
 PAGE = 128
 MB = 1024 * 1024
+# /metrics/current do vCD -> (métrica OpenMon, fator). KILOBYTE e KILOBYTES_PER_SECOND são KiB.
+VM_METRICS = {"cpu.usage.average": ("cpu.usage.pct", 1), "cpu.usagemhz.average": ("cpu.usage.mhz", 1),
+              "mem.usage.average": ("mem.usage.pct", 1), "disk.provisioned.latest": ("disk.capacity.bytes", 1024),
+              "disk.used.latest": ("disk.used.bytes", 1024), "disk.read.average": ("disk.read.bps", 1024),
+              "disk.write.average": ("disk.write.bps", 1024), "net.received.average": ("net.rx.bps", 8192),
+              "net.transmitted.average": ("net.tx.bps", 8192)}
+METRICS_CONCURRENCY = 16
 STATUS_VM = {"POWERED_ON": "up", "POWERED_OFF": "powered_off", "SUSPENDED": "suspended",
              "PARTIALLY_POWERED_OFF": "warning", "MIXED": "warning"}
 
@@ -160,6 +170,21 @@ class Api:
                 return out
             page += 1
 
+    async def vm_metrics(self, vm_id: str) -> dict[str, float]:
+        """Leitura atual de uma VM (``vm-<uuid>``). {} quando não há dado (recém-ligada, sem VMware Tools...)."""
+        vm_id = vm_id if vm_id.startswith("vm-") else f"vm-{vm_id}"
+        r = await self.client.get(f"/api/vApp/{vm_id}/metrics/current", headers={"Accept": self.accept})
+        if r.status_code in (400, 404, 500, 503):
+            return {}
+        await self._check(r)
+        out: dict[str, float] = {}
+        for m in (r.json() or {}).get("metric") or []:
+            try:
+                out[str(m.get("name"))] = float(m.get("value"))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     async def total(self, qtype: str, filter_: str | None = None) -> int:
         params: dict[str, Any] = {"type": qtype, "format": "records", "page": 1, "pageSize": 1}
         if filter_:
@@ -181,6 +206,55 @@ def _describe(exc: BaseException, integ: Integration) -> str:
     if isinstance(exc, httpx.TimeoutException):
         return f"sem resposta de {integ.endpoint}:{integ.port} (timeout)"
     return f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
+async def _all_vm_metrics(api: Api, integ: Integration, uuids: list[str]) -> tuple[dict[str, dict[str, float]], str]:
+    """Métricas atuais de muitas VMs em paralelo. Devolve ({uuid: {contador: valor}}, aviso)."""
+    if not uuids or (integ.options or {}).get("vm_metrics") is False:
+        return {}, ""
+    sem = asyncio.Semaphore(max(1, min(64, int((integ.options or {}).get("metrics_concurrency")
+                                                or METRICS_CONCURRENCY))))
+    out: dict[str, dict[str, float]] = {}
+    denied: list[str] = []
+    failed = 0
+
+    async def one(uid: str) -> None:
+        nonlocal failed
+        if denied:
+            return
+        async with sem:
+            if denied:
+                return
+            try:
+                vals = await api.vm_metrics(uid)
+            except CollectorError as exc:
+                if "permissão" in str(exc):
+                    denied.append(str(exc))
+                failed += 1
+                return
+            except httpx.HTTPError:
+                failed += 1
+                return
+            if vals:
+                out[uid] = vals
+
+    await asyncio.gather(*(one(u) for u in uuids))
+    if denied:
+        return out, "sem permissão para ler as métricas das VMs (direito \"View VM metrics\"); só o inventário"
+    if failed and not out:
+        return out, f"não foi possível ler as métricas das VMs ({failed} falha(s))"
+    return out, ""
+
+
+def _write_vm_metrics(w: Writer, aid: int, tid: int, vals: dict[str, float], memory_mb: Any) -> None:
+    for counter, (key, factor) in VM_METRICS.items():
+        v = vals.get(counter)
+        if v is None or v < 0:
+            continue
+        w.metric(aid, tid, key, round(v * factor, 2) if factor == 1 else v * factor)
+    pct = vals.get("mem.usage.average")
+    if pct is not None and memory_mb:
+        w.metric(aid, tid, "mem.used.bytes", pct / 100 * float(memory_mb) * MB)
 
 
 def _types(api: Api) -> tuple[str, str, str]:
@@ -228,12 +302,16 @@ async def poll(integ: Integration, w: Writer) -> str:
             vdcs = await api.query(t_vdc)
             sps = await api.query(t_sp)
             vms = await api.query(t_vm, "isVAppTemplate==false")
+            patterns = _org_filter(integ)
+            wanted_vdcs = {_uuid(v.get("href")) for v in vdcs if _wanted(v.get("orgName") or api.org, patterns)}
+            perf, perf_warning = await _all_vm_metrics(api, integ, [
+                _uuid(m.get("href")) for m in vms if str(m.get("status") or "").upper() == "POWERED_ON"
+                and _uuid(m.get("vdc")) in wanted_vdcs and not m.get("isVAppTemplate")])
     except CollectorError:
         raise
     except httpx.HTTPError as exc:
         raise CollectorError(_describe(exc, integ)) from exc
 
-    patterns = _org_filter(integ)
     root = (await w.assets_bulk([{"external_id": "vcd", "asset_type": "vcenter", "name": integ.name,
                                   "vendor": "VMware", "model": "Cloud Director", "hostname": integ.endpoint,
                                   "attributes": {"api_version": api.version, "product": "vCloud Director"}}]))["vcd"]
@@ -347,11 +425,15 @@ async def poll(integ: Integration, w: Writer) -> str:
         w.metric(aid, tid, "cpu.allocated.vcpu", m.get("numberOfCpus"))
         if m.get("memoryMB"):
             w.metric(aid, tid, "mem.allocated.bytes", m["memoryMB"] * MB)
-        if m.get("totalStorageAllocatedMb"):
+        vals = perf.get(_uuid(m.get("href"))) if powered else None
+        if m.get("totalStorageAllocatedMb") and not (vals and "disk.provisioned.latest" in vals):
             w.metric(aid, tid, "disk.capacity.bytes", m["totalStorageAllocatedMb"] * MB)
+        if vals:
+            _write_vm_metrics(w, aid, tid, vals, m.get("memoryMB"))
 
     removed = await w.retire_missing(("vcenter", "datacenter", "datastore", "vm"))
     orgs = {i["org"] for i in vdc_info.values()}
-    return (f"{len(orgs)} organização(ões), {len(vdc_ids)} VDC(s), {len(vm_ids)} VM(s) ({on} ligada(s)), "
-            f"{len(sp_ids)} perfil(is) de armazenamento"
-            + (f", {removed} removido(s) do inventário" if removed else ""))
+    msg = (f"{len(orgs)} organização(ões), {len(vdc_ids)} VDC(s), {len(vm_ids)} VM(s) ({on} ligada(s), "
+           f"{len(perf)} com métricas), {len(sp_ids)} perfil(is) de armazenamento"
+           + (f", {removed} removido(s) do inventário" if removed else ""))
+    return f"warning: {msg}; {perf_warning}" if perf_warning else msg

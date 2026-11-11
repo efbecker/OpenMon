@@ -34,6 +34,7 @@ class FakeVcd:
                      "vdcName": "VDC-ACME", "storageLimitMB": 0, "storageUsedMB": 2048, "isEnabled": True}]
         self.vms = [self.vm(i, "v1" if i < 200 else "v2") for i in range(260)]
         self.vms[0]["status"] = "POWERED_OFF"
+        self.metrics_status = 200
 
     @staticmethod
     def vm(i, v):
@@ -69,6 +70,21 @@ class FakeVcd:
             assert size <= 128
             return httpx.Response(200, json={"total": len(data), "page": page, "pageSize": size,
                                              "record": data[(page - 1) * size:page * size]})
+        if path.startswith("/api/vApp/vm-") and path.endswith("/metrics/current"):
+            assert request.headers["accept"] == "application/*+json;version=38.0"
+            if self.metrics_status != 200:
+                return httpx.Response(self.metrics_status, json={"message": "Forbidden"})
+            i = int(path.split("/")[3][3:])
+            if i == 7:  # VM sem VMware Tools: o vCD responde sem métricas
+                return httpx.Response(200, json={"metric": []})
+            return httpx.Response(200, json={"metric": [
+                {"name": "cpu.usage.average", "unit": "PERCENT", "value": 12.5},
+                {"name": "cpu.usagemhz.average", "unit": "MEGAHERTZ", "value": 600.0},
+                {"name": "mem.usage.average", "unit": "PERCENT", "value": 50.0},
+                {"name": "disk.provisioned.latest", "unit": "KILOBYTE", "value": 41943040},
+                {"name": "disk.used.latest", "unit": "KILOBYTE", "value": 10485760},
+                {"name": "disk.read.average", "unit": "KILOBYTES_PER_SECOND", "value": 100},
+                {"name": "disk.write.average", "unit": "KILOBYTES_PER_SECOND", "value": "x"}]})
         return httpx.Response(404, json={"message": "not found"})
 
 
@@ -111,7 +127,7 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
     client.post("/api/admin/tenant-rules", json={"tenant_id": pollux["id"], "match_field": "folder",
                                                  "pattern": "POLLUX", "priority": 10}, headers=h(csrf))
     out = client.post(f"/api/admin/integrations/{integ['id']}/poll", headers=h(csrf)).json()
-    assert out["status"] == "ok" and "2 organização(ões), 2 VDC(s), 260 VM(s) (259 ligada(s))" in out["message"], out
+    assert out["status"] == "ok" and "2 organização(ões), 2 VDC(s), 260 VM(s) (259 ligada(s), 258 com métricas)" in out["message"], out
     assert ("DELETE", "/cloudapi/1.0.0/sessions/current") in fake.calls
 
     by_tenant = dict(sql("SELECT t.slug, count(*) FROM assets a JOIN tenants t ON t.id = a.tenant_id "
@@ -127,6 +143,18 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
     vdc_mem = dict(sql("SELECT m.metric_id, m.value FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
                        "WHERE a.name = 'POLLUX / VDC-POLLUX'"))
     assert vdc_mem[10] == 75.0 and vdc_mem[1] == 25.0
+    # Uso real por VM ligada (metrics/current); desligada e sem Tools ficam só com a alocação
+    vm1 = dict(sql("SELECT m.metric_id, m.value FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
+                   "WHERE a.name = 'vm-v1-1'"))
+    assert vm1[1] == 12.5 and vm1[2] == 600 and vm1[10] == 50 and vm1[11] == 2048 * 1024 * 1024
+    assert vm1[20] == 40 * 1024 ** 3 and vm1[21] == 10 * 1024 ** 3 and vm1[26] == 100 * 1024 and 27 not in vm1
+    for name in ("vm-v1-0", "vm-v1-7"):
+        ids = {r[0] for r in sql("SELECT m.metric_id FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
+                                 "WHERE a.name = %s", name)}
+        assert 1 not in ids and 20 in ids and 4 in ids, (name, ids)
+    # Só VMs das organizações escolhidas (OUTRO fica de fora) e ligadas
+    asked = {p for _, p in fake.calls if p.endswith("/metrics/current")}
+    assert len(asked) == 259 and "/api/vApp/vm-0000/metrics/current" not in asked
 
     # Cliente Pollux só vê as próprias VMs
     new_user(client, csrf, "cli-pollux", tenant_ids=[pollux["id"]], must_change_password=False)
@@ -140,6 +168,11 @@ def test_vcd_orgs_vdcs_vms_and_tenant_rules(client, fake):
     fake.vms.pop()
     out = client.post(f"/api/admin/integrations/{integ['id']}/poll", headers=h(csrf)).json()
     assert "1 removido(s)" in out["message"], out
+
+    # Conta sem o direito de ver métricas: a coleta segue com o inventário e avisa
+    fake.metrics_status = 403
+    out = client.post(f"/api/admin/integrations/{integ['id']}/poll", headers=h(csrf)).json()
+    assert out["status"] == "warning" and "View VM metrics" in out["message"], out
 
 
 def test_vcd_api_token_and_edit_keeps_mode(client, fake):

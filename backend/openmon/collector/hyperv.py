@@ -30,7 +30,7 @@ $o=Get-CimInstance Win32_OperatingSystem;$c=Get-CimInstance Win32_ComputerSystem
 $cpu=(Get-CimInstance Win32_Processor|Measure-Object LoadPercentage -Average).Average
 $cl=$null;try{$cl=(Get-Cluster -ErrorAction Stop).Name}catch{}
 $net=@{};try{(Get-Counter '\Hyper-V Virtual Network Adapter(*)\Bytes Received/sec','\Hyper-V Virtual Network Adapter(*)\Bytes Sent/sec' -ErrorAction SilentlyContinue).CounterSamples|%{$net[$_.Path]=$_.CookedValue}}catch{}
-$vms=@(Get-VM|%{$v=$_;[pscustomobject]@{id=$v.VMId.Guid;name=$v.Name;state=[string]$v.State;cpu=$v.CPUUsage;vcpu=$v.ProcessorCount;mem=$v.MemoryAssigned;mem_startup=$v.MemoryStartup;mem_demand=$v.MemoryDemand;dyn=$v.DynamicMemoryEnabled;up=[int64]$v.Uptime.TotalSeconds;status=[string]$v.Status;hb=[string]$v.Heartbeat;gen=$v.Generation;ver=[string]$v.Version;clustered=$v.IsClustered;repl=[string]$v.ReplicationState;ips=@($v.NetworkAdapters|%{$_.IPAddresses}|?{$_ -and $_ -notmatch ':'})}})
+$vms=@(Get-VM|%{$v=$_;[pscustomobject]@{id=$v.VMId.Guid;name=$v.Name;state=[string]$v.State;cpu=$v.CPUUsage;vcpu=$v.ProcessorCount;mem=$v.MemoryAssigned;mem_startup=$v.MemoryStartup;mem_demand=$v.MemoryDemand;dyn=$v.DynamicMemoryEnabled;up=[int64]$v.Uptime.TotalSeconds;status=[string]$v.Status;hb=[string]$v.Heartbeat;gen=$v.Generation;ver=[string]$v.Version;clustered=$v.IsClustered;repl=[string]$v.ReplicationState;ips=@($v.NetworkAdapters|%{$_.IPAddresses}|?{$_ -and $_ -notmatch ':'});dsk=@(Get-VMHardDiskDrive -VM $v -EA 0|?{$_.Path}|%{try{$h=Get-VHD -Path $_.Path -EA Stop;@{s=$h.Size;f=$h.FileSize}}catch{}})}})
 [pscustomobject]@{host=$c.DNSHostName;domain=$c.Domain;vendor=$c.Manufacturer;model=$c.Model;cores=$c.NumberOfLogicalProcessors;mem=$c.TotalPhysicalMemory;free=[int64]$o.FreePhysicalMemory*1024;os=$o.Caption;boot=$o.LastBootUpTime.ToUniversalTime().ToString('o');cpu=$cpu;cluster=$cl;vms=$vms;net=$net}|ConvertTo-Json -Depth 4 -Compress
 """
 
@@ -270,6 +270,11 @@ async def poll(integ: Integration, w: Writer) -> str:
         w.metric(aid, tid, "cpu.allocated.vcpu", v.get("vcpu"))
         alloc = v.get("mem") if v.get("dyn") else v.get("mem_startup")
         w.metric(aid, tid, "mem.allocated.bytes", alloc)
+        # Discos virtuais (Get-VHD): tamanho máximo e o que o arquivo .vhdx ocupa de fato
+        disks = [d for d in (v.get("dsk") or []) if isinstance(d, dict)]
+        if disks:
+            w.metric(aid, tid, "disk.capacity.bytes", sum(int(d.get("s") or 0) for d in disks))
+            w.metric(aid, tid, "disk.used.bytes", sum(int(d.get("f") or 0) for d in disks))
         if not on:
             continue
         running += 1

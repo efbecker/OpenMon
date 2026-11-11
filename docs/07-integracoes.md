@@ -90,8 +90,9 @@ A cada coleta (padrão 300 s), no Query Service, 128 registros por página:
 **Tenant de cada cliente**: crie uma regra de tenant com o campo **Pasta / organização do vCloud**. O padrão casa com
 o nome da organização (`POLLUX*`) ou com `Org/VDC` (`POLLUX/VDC-POLLUX`). Sem regra, fica no tenant da integração.
 
-O Query Service não traz o uso real de CPU e memória de cada VM. Para isso, cadastre também o vCenter que está por
-baixo (as VMs aparecem nas duas integrações).
+Uso real de cada VM ligada (CPU, memória, disco usado e provisionado, leitura/escrita em disco) vem de
+`/api/vApp/vm-<id>/metrics/current`; a conta precisa do direito *View VM metrics*. Detalhes e gráficos em
+[10-metricas-vms.md](10-metricas-vms.md).
 
 ## Hyper-V (WinRM)
 
