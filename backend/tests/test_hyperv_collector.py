@@ -24,7 +24,8 @@ def host_json(name, vms, cluster="HVCLU01"):
             "vms": [{"id": v["id"], "name": v["name"], "state": v.get("state", "Running"), "cpu": 12, "vcpu": 4,
                      "mem": 8 * 1024 ** 3, "mem_startup": 8 * 1024 ** 3, "mem_demand": 6 * 1024 ** 3, "dyn": False,
                      "up": 86400, "status": "Operating normally", "hb": "OkApplicationsHealthy", "gen": 2,
-                     "ver": "10.0", "clustered": True, "repl": "Disabled", "ips": ["10.1.0.%d" % (i + 10)]}
+                     "ver": "10.0", "clustered": True, "repl": "Disabled", "ips": ["10.1.0.%d" % (i + 10)],
+                     "dsk": [{"s": 100 * 1024 ** 3, "f": 30 * 1024 ** 3}, {"s": 50 * 1024 ** 3, "f": 10 * 1024 ** 3}]}
                     for i, v in enumerate(vms)]}
 
 
@@ -98,6 +99,9 @@ def test_hyperv_hosts_vms_rules_migration_and_down_host(client, hosts):
     rx = sql("SELECT value FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
              "WHERE a.name = 'ACME-APP01' AND m.metric_id = 30")
     assert rx and rx[0][0] == 8_000_000
+    disk = dict(sql("SELECT m.metric_id, m.value FROM metric_samples m JOIN assets a ON a.id = m.asset_id "
+                    "WHERE a.name = 'ACME-APP01' AND m.metric_id IN (20, 21)"))
+    assert disk == {20: 150 * 1024 ** 3, 21: 40 * 1024 ** 3}
 
     # Live migration: ACME-DB01 vai para o HV02, mesmo ativo (VMId), outro host
     db01 = state["hv01.empresa.local"]["vms"].pop(1)

@@ -42,12 +42,13 @@ DS_PROPS = ["name", "parent", "summary.capacity", "summary.freeSpace", "summary.
 FOLDER_PROPS = ["name", "parent"]
 POOL_PROPS = ["name", "parent"]
 DC_PROPS = ["name", "parent"]
-# contador do PerfManager -> (métrica OpenMon, fator)
-PERF = {"net.received.average": ("net.rx.bps", 8000), "net.transmitted.average": ("net.tx.bps", 8000),
+# contador do PerfManager -> (métrica OpenMon, fator). Os contadores "KBps" do vSphere são KiB/s:
+# rede vira bit/s (x 8 x 1024) e throughput de disco vira B/s (x 1024), como em metric_definitions.
+PERF = {"net.received.average": ("net.rx.bps", 8192), "net.transmitted.average": ("net.tx.bps", 8192),
         "cpu.ready.summation": ("cpu.ready.pct", None),
         "disk.numberReadAveraged.average": ("disk.read.iops", 1),
         "disk.numberWriteAveraged.average": ("disk.write.iops", 1),
-        "disk.read.average": ("disk.read.bps", 8000), "disk.write.average": ("disk.write.bps", 8000)}
+        "disk.read.average": ("disk.read.bps", 1024), "disk.write.average": ("disk.write.bps", 1024)}
 STATUS_VM = {"poweredOn": "up", "poweredOff": "powered_off", "suspended": "suspended"}
 
 _sessions: dict[int, tuple[str, Any]] = {}

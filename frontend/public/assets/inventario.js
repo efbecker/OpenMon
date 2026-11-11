@@ -11,6 +11,8 @@
   const OPER = { 1: "up", 2: "down", 3: "testing", 5: "dormant", 6: "ausente", 7: "down (camada inferior)" };
   const STATUS = { up: ["tag-ok", "no ar"], down: ["tag-bad", "fora"], warning: ["tag-auto", "aviso"],
     unknown: ["tag-off", "desconhecido"], maintenance: ["tag-you", "manutenção"] };
+  // Tipos com séries de CPU/memória/disco/rede ou armazenamento: abrem os gráficos por período (vms.html)
+  const CHARTS = new Set(["vm", "hypervisor_host", "datacenter", "datastore", "backup_repository"]);
   const params = new URLSearchParams(location.search);
   let data = { assets: [], tenants: [], summary: {}, can_manage: false };
   let detail = null;
@@ -87,7 +89,9 @@
         el("td", null, a.deleted_at ? el("span", { cls: "tag tag-off", text: "removido" }) : tag(a.status)),
         el("td", { cls: "small", text: reading(a) }), el("td", { text: a.interfaces ? String(a.interfaces) : "—" }),
         el("td", { cls: "small", text: when(a.last_seen_at, "nunca") }),
-        el("td", null, button("Abrir", "ghost", () => openDetail(a.id))));
+        el("td", null, CHARTS.has(a.asset_type) && !a.deleted_at
+          ? el("a", { cls: "btn small-btn ghost", text: "Gráficos", attrs: { href: `/vms.html?id=${a.id}` } }) : null,
+        button("Abrir", "ghost", () => openDetail(a.id))));
       return tr;
     }));
     $("count").textContent = data.assets.length ? `(${data.assets.length})` : "";

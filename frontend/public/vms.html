@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Máquinas virtuais</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/vendor/chart.umd.js?v=__VERSION__" defer></script>
+  <script src="assets/vms.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/alertas.html">Alertas</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/vms.html" class="active" aria-current="page">VMs</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+        <a href="/https.html" data-nav="admin">HTTPS</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page wide" id="main" hidden>
+    <section class="card" id="detail" hidden>
+      <div class="section-head">
+        <div>
+          <h2 id="d-title"></h2>
+          <p class="muted small" id="d-sub"></p>
+        </div>
+        <div class="head-actions">
+          <button type="button" class="btn ghost" id="btn-close">Voltar à lista</button>
+        </div>
+      </div>
+      <div class="period-bar" role="group" aria-label="Período">
+        <div class="seg" id="periods"></div>
+        <div class="custom-period">
+          <label class="muted small" for="p-from">De</label>
+          <input id="p-from" type="datetime-local" class="filter">
+          <label class="muted small" for="p-to">até</label>
+          <input id="p-to" type="datetime-local" class="filter">
+          <button type="button" class="btn ghost small-btn" id="btn-custom">Aplicar</button>
+        </div>
+      </div>
+      <p class="muted small" id="d-tier"></p>
+      <div class="stats" id="d-stats"></div>
+      <p class="error-text" id="d-error" hidden></p>
+      <p class="muted" id="d-empty" hidden>Sem leituras neste período. A coleta grava uma amostra por minuto; se a VM
+        acabou de aparecer, aguarde alguns minutos.</p>
+      <div class="charts" id="charts"></div>
+    </section>
+
+    <section class="card" id="list-card">
+      <div class="section-head">
+        <div>
+          <h2>Máquinas virtuais <span class="count" id="count"></span></h2>
+          <p class="muted small" id="intro">VMs do vCenter, vCloud e Hyper-V com a última leitura de CPU, memória, disco e
+            rede. Abra uma VM para ver os gráficos por período.</p>
+        </div>
+        <div class="head-actions">
+          <select class="filter" id="filter-tenant" aria-label="Filtrar por tenant"><option value="">Todos os tenants</option></select>
+          <select class="filter" id="filter-state" aria-label="Filtrar por situação">
+            <option value="">Todas</option><option value="on">Ligadas</option><option value="off">Desligadas</option>
+          </select>
+          <input class="filter" id="filter-q" type="search" maxlength="100" placeholder="Nome, host ou IP" aria-label="Buscar">
+        </div>
+      </div>
+      <div class="stats" id="summary"></div>
+      <p class="error-text" id="list-error" hidden></p>
+      <div class="table-wrap">
+        <table class="table" id="table">
+          <thead><tr>
+            <th><button type="button" class="sort" data-sort="name">Nome</button></th>
+            <th class="col-tenant">Tenant</th><th>Situação</th>
+            <th><button type="button" class="sort" data-sort="vcpu">vCPU</button></th>
+            <th><button type="button" class="sort" data-sort="mem">Memória</button></th>
+            <th><button type="button" class="sort" data-sort="cpu">CPU</button></th>
+            <th><button type="button" class="sort" data-sort="mempct">Mem. usada</button></th>
+            <th><button type="button" class="sort" data-sort="disk">Disco</button></th>
+            <th><button type="button" class="sort" data-sort="net">Rede ↓ / ↑</button></th>
+            <th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="empty" hidden>Nenhuma VM encontrada.</p>
+    </section>
+  </main>
+</body>
+</html>

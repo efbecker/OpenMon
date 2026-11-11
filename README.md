@@ -81,6 +81,7 @@ atualizar, rode o mesmo comando.
 | 6b. Coletores vCenter (lote, 5.000+ VMs), vCloud Director (orgs, VDCs, VMs), Hyper-V (WinRM) e Veeam (REST), tela Backups com SLA, regras de tenant | ✅ [docs/07-integracoes.md](docs/07-integracoes.md) |
 | 7. Alertas e notificações (e-mail STARTTLS/TLS, Telegram, webhook HMAC), reconhecimento, agendador | ✅ [docs/08-alertas.md](docs/08-alertas.md) |
 | 7b. Domínio & HTTPS: certificado digital pela tela, validação, Apache com redirect, guardado no banco | ✅ [docs/09-dominio-https.md](docs/09-dominio-https.md) |
+| 8a. Métricas por VM (CPU, memória, disco, rede) do vCenter, vCloud e Hyper-V, tela VMs com gráficos por período | ✅ [docs/10-metricas-vms.md](docs/10-metricas-vms.md) |
 | 8. Dashboards, relatórios (PDF/CSV, 60 meses), backup/restauração | — |
 
 ## Estrutura do repositório
