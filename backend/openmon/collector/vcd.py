@@ -181,10 +181,23 @@ class Api:
         out: dict[str, float] = {}
         for m in (r.json() or {}).get("metric") or []:
             try:
-                out[str(m.get("name"))] = float(m.get("value"))
+                name, value = str(m.get("name")), float(m.get("value"))
             except (TypeError, ValueError):
                 continue
+            if value < 0:  # -1 = sem dado neste contador
+                continue
+            # Um registro por disco em algumas versões: soma espaço e throughput, o resto fica com o último
+            out[name] = out.get(name, 0.0) + value if name.startswith("disk.") else value
         return out
+
+    async def vm_disks_bytes(self, vm_id: str) -> int | None:
+        """Tamanho provisionado dos discos da VM (soma), pelo hardware virtual. None se não der para ler."""
+        vm_id = vm_id if vm_id.startswith("vm-") else f"vm-{vm_id}"
+        r = await self.client.get(f"/api/vApp/{vm_id}/virtualHardwareSection/disks",
+                                  headers={"Accept": f"application/*+xml;version={self.version}"})
+        if r.status_code >= 400:
+            return None
+        return disks_bytes_from_xml(r.text)
 
     async def total(self, qtype: str, filter_: str | None = None) -> int:
         params: dict[str, Any] = {"type": qtype, "format": "records", "page": 1, "pageSize": 1}
@@ -247,6 +260,75 @@ async def _all_vm_metrics(api: Api, integ: Integration, uuids: list[str]) -> tup
     return out, ""
 
 
+def disks_bytes_from_xml(text: str) -> int | None:
+    """RasdItemsList: soma dos itens ResourceType 17 (disco). Capacidade em MB no atributo ``capacity`` do
+    HostResource ou, na falta dele, VirtualQuantity em bytes."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return None
+    total, found = 0, False
+    for item in root.iter():
+        if not item.tag.endswith("}Item") and item.tag != "Item":
+            continue
+        kids = {c.tag.rsplit("}", 1)[-1]: c for c in item}
+        if (kids.get("ResourceType") is None or (kids["ResourceType"].text or "").strip() != "17"):
+            continue
+        size = None
+        host = kids.get("HostResource")
+        if host is not None:
+            for k, v in host.attrib.items():
+                if k.rsplit("}", 1)[-1] == "capacity":
+                    try:
+                        size = int(float(v)) * MB
+                    except ValueError:
+                        pass
+        if size is None and kids.get("VirtualQuantity") is not None:
+            try:
+                size = int(float(kids["VirtualQuantity"].text or ""))
+            except ValueError:
+                pass
+        if size:
+            total += size
+            found = True
+    return total if found else None
+
+
+# (integração, vm) -> (monotonic, bytes): o hardware muda pouco; relê a cada 6 h
+_disk_cache: dict[tuple[int, str], tuple[float, int]] = {}
+DISK_CACHE_SECONDS = 6 * 3600
+
+
+async def _all_vm_disks(api: Api, integ: Integration, uuids: list[str]) -> dict[str, int]:
+    """Disco provisionado das VMs sem esse dado no Query Service nem nas métricas (cache de 6 h)."""
+    import time
+    now = time.monotonic()
+    out: dict[str, int] = {}
+    todo = []
+    for u in uuids:
+        hit = _disk_cache.get((integ.id, u))
+        if hit and now - hit[0] < DISK_CACHE_SECONDS:
+            out[u] = hit[1]
+        else:
+            todo.append(u)
+    sem = asyncio.Semaphore(max(1, min(64, int((integ.options or {}).get("metrics_concurrency")
+                                                or METRICS_CONCURRENCY))))
+
+    async def one(uid: str) -> None:
+        async with sem:
+            try:
+                size = await api.vm_disks_bytes(uid)
+            except httpx.HTTPError:
+                return
+        if size:
+            _disk_cache[(integ.id, uid)] = (now, size)
+            out[uid] = size
+
+    await asyncio.gather(*(one(u) for u in todo))
+    return out
+
+
 def _write_vm_metrics(w: Writer, aid: int, tid: int, vals: dict[str, float], memory_mb: Any) -> None:
     for counter, (key, factor) in VM_METRICS.items():
         v = vals.get(counter)
@@ -293,6 +375,19 @@ async def test(integ: Integration) -> dict[str, Any]:
             t_vdc, _, t_vm = _types(api)
             vdcs = await api.query(t_vdc)
             nvm = await api.total(t_vm, "isVAppTemplate==false")
+            # Diagnóstico: o que este vCD devolve de uma VM ligada (campos de disco e nomes das métricas)
+            sample = await api.query(t_vm, "isVAppTemplate==false;status==POWERED_ON", limit=1)
+            probe: dict[str, Any] = {}
+            if sample:
+                vid = _uuid(sample[0].get("href"))
+                probe["vm_exemplo"] = sample[0].get("name")
+                probe["campos_disco"] = {k: v for k, v in sample[0].items()
+                                         if "storage" in k.lower() or "disk" in k.lower()} or "nenhum"
+                try:
+                    probe["metricas"] = sorted(await api.vm_metrics(vid)) or "nenhuma"
+                except CollectorError as exc:
+                    probe["metricas"] = str(exc)
+                probe["disco_pelo_hardware"] = await api.vm_disks_bytes(vid)
     except CollectorError:
         raise
     except httpx.HTTPError as exc:
@@ -307,7 +402,8 @@ async def test(integ: Integration) -> dict[str, Any]:
         summary += f" · filtro casa {len(chosen)} organização(ões)"
     return {"ok": True, "summary": summary,
             "details": {"api_version": api.version, "provider": "sim" if api.provider else "não", "orgs": len(orgs),
-                        "vdcs": len(vdcs), "vms": nvm, "orgs_matched": chosen[:50] if patterns else None}}
+                        "vdcs": len(vdcs), "vms": nvm, "orgs_matched": chosen[:50] if patterns else None,
+                        **probe}}
 
 
 async def poll(integ: Integration, w: Writer) -> str:
@@ -323,6 +419,11 @@ async def poll(integ: Integration, w: Writer) -> str:
                 _uuid(m.get("href")) for m in vms if str(m.get("status") or "").upper() == "POWERED_ON"
                 and _uuid(m.get("vdc")) in wanted_vdcs and not m.get("isVAppTemplate")])
             vapp_created = await _vapp_dates(api, vms)
+            # Plano B do disco provisionado: VMs sem totalStorageAllocatedMb e sem disk.provisioned nas métricas
+            disks = await _all_vm_disks(api, integ, [
+                _uuid(m.get("href")) for m in vms if _uuid(m.get("vdc")) in wanted_vdcs
+                and not m.get("isVAppTemplate") and not m.get("totalStorageAllocatedMb")
+                and "disk.provisioned.latest" not in perf.get(_uuid(m.get("href")), {})])
     except CollectorError:
         raise
     except httpx.HTTPError as exc:
@@ -432,10 +533,11 @@ async def poll(integ: Integration, w: Writer) -> str:
                                      "org": info["org"], "vdc": info["name"], "vapp": m.get("containerName"),
                                      "folder": f"{info['org']}/{info['name']}", "moref": m.get("moref"),
                                      "storage_profile": m.get("storageProfileName"), "hypervisor": "vcloud",
-                                     "disk_bytes": (m.get("totalStorageAllocatedMb") or 0) * MB or None,
+                                     "disk_bytes": (float(m["totalStorageAllocatedMb"]) * MB if m.get("totalStorageAllocatedMb")
+                                                    else disks.get(mid)),
                                      **({"created_at": str(created)} if created else {})}})
     vm_ids = await w.assets_bulk(items)
-    on = 0
+    on = with_disk = 0
     for m in vms:
         key = f"vm:{_uuid(m.get('href'))}"
         if key not in vm_ids:
@@ -448,14 +550,19 @@ async def poll(integ: Integration, w: Writer) -> str:
         if m.get("memoryMB"):
             w.metric(aid, tid, "mem.allocated.bytes", m["memoryMB"] * MB)
         vals = perf.get(_uuid(m.get("href"))) if powered else None
-        if m.get("totalStorageAllocatedMb") and not (vals and "disk.provisioned.latest" in vals):
-            w.metric(aid, tid, "disk.capacity.bytes", m["totalStorageAllocatedMb"] * MB)
+        if not (vals and "disk.provisioned.latest" in vals):
+            if m.get("totalStorageAllocatedMb"):
+                w.metric(aid, tid, "disk.capacity.bytes", float(m["totalStorageAllocatedMb"]) * MB)
+            elif disks.get(_uuid(m.get("href"))):
+                w.metric(aid, tid, "disk.capacity.bytes", disks[_uuid(m.get("href"))])
+        if vals and "disk.used.latest" in vals:
+            with_disk += 1
         if vals:
             _write_vm_metrics(w, aid, tid, vals, m.get("memoryMB"))
 
     removed = await w.retire_missing(("vcenter", "datacenter", "datastore", "vm"))
     orgs = {i["org"] for i in vdc_info.values()}
     msg = (f"{len(orgs)} organização(ões), {len(vdc_ids)} VDC(s), {len(vm_ids)} VM(s) ({on} ligada(s), "
-           f"{len(perf)} com métricas), {len(sp_ids)} perfil(is) de armazenamento"
+           f"{len(perf)} com métricas, {with_disk} com disco usado), {len(sp_ids)} perfil(is) de armazenamento"
            + (f", {removed} removido(s) do inventário" if removed else ""))
     return f"warning: {msg}; {perf_warning}" if perf_warning else msg
