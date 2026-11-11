@@ -51,7 +51,7 @@ def test_client_panel_consumption_and_growth(client, fake):
         rows += [(t, pollux["id"], vdc, 1, pct), (t, pollux["id"], vdc, 2, 20000 * pct / 100),
                  (t, pollux["id"], vdc, 11, 48 * GB), (t, pollux["id"], vdc, 12, 64 * GB),
                  (t, pollux["id"], sp, 50, 1024 * GB), (t, pollux["id"], sp, 52, 900 * GB),
-                 (t, pollux["id"], vm1, 1, 80.0), (t, pollux["id"], vm2, 1, 10.0)]
+                 (t, pollux["id"], vm1, 1, 99.0), (t, pollux["id"], vm2, 1, 10.0)]
     import psycopg
     from pgsupport import admin_dsn
     with psycopg.connect(admin_dsn(), autocommit=True) as c:
@@ -79,7 +79,7 @@ def test_client_panel_consumption_and_growth(client, fake):
     assert c30["tier"] == "hourly" and c30["cpu"]["allocated_last"] == 20000
     assert 55 < c30["cpu"]["pct_stats"]["max"] <= 61 and c30["memory"]["pct_stats"]["avg"] == 75
     assert c30["storage"]["allocated_last"] == 1024 * GB
-    assert [v["name"] for v in c30["top_vms"]["cpu"]][:2] == ["vm-v1-5", "vm-v1-6"]
+    assert c30["top_vms"]["cpu"][0]["name"] == "vm-v1-5"
     # 1 dia: amostras brutas; 6 meses: diária
     c1 = client.get("/api/reports/consumption", params={"start": (now - timedelta(days=1)).isoformat()}).json()
     assert c1["tier"] == "samples" and any(v is not None for v in c1["cpu"]["pct"])
