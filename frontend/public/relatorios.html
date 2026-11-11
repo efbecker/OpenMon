@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Relatórios</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/vendor/chart.umd.js?v=__VERSION__" defer></script>
+  <script src="assets/charts.js?v=__VERSION__" defer></script>
+  <script src="assets/relatorios.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/painel.html">Painel</a>
+        <a href="/relatorios.html" class="active" aria-current="page">Relatórios</a>
+        <a href="/alertas.html">Alertas</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/vms.html">VMs</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+        <a href="/https.html" data-nav="admin">HTTPS</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+    <main class="page wide" id="main" hidden>
+    <section class="card no-print">
+      <h2>Relatórios</h2>
+      <p class="muted small">Escolha o cliente, o tipo e o período. O relatório aparece abaixo; use Imprimir / PDF para salvar
+        ou enviar ao cliente, ou Baixar CSV para planilhas.</p>
+      <form class="rep-form" id="form">
+        <label class="field"><span class="label">Cliente</span><select id="tenant"></select></label>
+        <label class="field"><span class="label">Relatório</span>
+          <select id="kind">
+            <option value="growth">Crescimento de recursos</option>
+            <option value="consumption">Consumo x contratado</option>
+          </select></label>
+        <label class="field"><span class="label">De</span><input id="start" type="date"></label>
+        <label class="field"><span class="label">Até</span><input id="end" type="date"></label>
+        <button type="submit" class="btn primary" id="go">Gerar</button>
+      </form>
+      <div class="head-actions left mt" id="presets">
+        <span class="muted small">Atalhos:</span>
+        <button type="button" class="btn ghost small-btn" data-preset="month">Mês passado</button>
+        <button type="button" class="btn ghost small-btn" data-preset="30">Últimos 30 dias</button>
+        <button type="button" class="btn ghost small-btn" data-preset="year">Este ano</button>
+        <button type="button" class="btn ghost small-btn" data-preset="365">Últimos 12 meses</button>
+        <button type="button" class="btn ghost small-btn" data-preset="all">Desde o início</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost small-btn" id="print" disabled>Imprimir / PDF</button>
+        <button type="button" class="btn ghost small-btn" id="csv" disabled>Baixar CSV</button>
+      </div>
+      <p class="error-text" id="error" hidden></p>
+    </section>
+
+    <article class="report" id="report" hidden>
+      <header class="rep-head">
+        <div>
+          <div class="eyebrow" id="r-kind"></div>
+          <h1 id="r-tenant"></h1>
+          <div class="rep-meta" id="r-meta"></div>
+        </div>
+        <img src="assets/openmon.svg" alt="OpenMon" width="40" height="40">
+      </header>
+      <div class="rep-kpis" id="r-kpis"></div>
+
+      <section class="rep-sec" id="g-evo">
+        <h2>Evolução dos recursos</h2>
+        <p class="muted small">Total no fim de cada mês.</p>
+        <div class="chart-grid two">
+          <figure class="chart-panel"><figcaption><strong>Máquinas virtuais</strong></figcaption>
+            <div class="chart-box"><canvas id="g0" role="img" aria-label="Máquinas virtuais por mês"></canvas></div></figure>
+          <figure class="chart-panel"><figcaption><strong>vCPU</strong></figcaption>
+            <div class="chart-box"><canvas id="g1" role="img" aria-label="vCPU por mês"></canvas></div></figure>
+          <figure class="chart-panel"><figcaption><strong>Memória</strong> <span class="muted small">GB</span></figcaption>
+            <div class="chart-box"><canvas id="g2" role="img" aria-label="Memória por mês"></canvas></div></figure>
+          <figure class="chart-panel"><figcaption><strong>Disco</strong> <span class="muted small">GB</span></figcaption>
+            <div class="chart-box"><canvas id="g3" role="img" aria-label="Disco por mês"></canvas></div></figure>
+        </div>
+      </section>
+
+      <section class="rep-sec" id="g-years">
+        <h2>Resumo por ano</h2>
+        <div class="table-wrap"><table class="table" id="years">
+          <thead><tr><th>Ano</th><th>Máquinas virtuais</th><th>vCPU</th><th>Memória</th><th>Disco</th></tr></thead>
+          <tbody></tbody></table></div>
+        <p class="muted small">Total no fim de cada ano; em verde, o que foi adicionado no ano.</p>
+      </section>
+
+      <section class="rep-sec" id="c-usage">
+        <h2>Consumo no período</h2>
+        <p class="muted small" id="c-sub"></p>
+        <div class="chart-grid">
+          <figure class="chart-panel"><figcaption><strong>CPU</strong> <span class="muted small">em % do contratado</span></figcaption>
+            <div class="chart-box"><canvas id="c0" role="img" aria-label="CPU em % do contratado"></canvas></div></figure>
+          <figure class="chart-panel"><figcaption><strong>Memória</strong> <span class="muted small">GB</span></figcaption>
+            <div class="chart-box"><canvas id="c1" role="img" aria-label="Memória em uso e contratada"></canvas></div></figure>
+          <figure class="chart-panel"><figcaption><strong>Armazenamento</strong> <span class="muted small">TB</span></figcaption>
+            <div class="chart-box"><canvas id="c2" role="img" aria-label="Armazenamento em uso e limite"></canvas></div></figure>
+        </div>
+        <div class="table-wrap"><table class="table" id="c-table">
+          <thead><tr><th>Recurso</th><th>Contratado</th><th>Média</th><th>Pico</th><th>Percentil 95</th><th>Tempo acima de 90%</th></tr></thead>
+          <tbody></tbody></table></div>
+      </section>
+
+      <section class="rep-sec" id="c-top">
+        <h2>VMs mais exigidas</h2>
+        <div class="grid inner">
+          <div class="table-wrap"><table class="table" id="top-cpu">
+            <thead><tr><th>VM</th><th>CPU média</th><th>Pico</th></tr></thead><tbody></tbody></table></div>
+          <div class="table-wrap"><table class="table" id="top-mem">
+            <thead><tr><th>VM</th><th>Memória média</th><th>Pico</th></tr></thead><tbody></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="rep-sec" id="env">
+        <h2>Ambiente atual</h2>
+        <p class="muted small">Recursos alocados para o cliente no data center virtual e quanto está em uso hoje.</p>
+        <div class="table-wrap"><table class="table" id="env-table">
+          <thead><tr><th>Data center virtual</th><th>CPU</th><th>Memória</th><th>Armazenamento</th><th>VMs ligadas</th></tr></thead>
+          <tbody></tbody></table></div>
+      </section>
+
+      <section class="rep-sec" id="g-vms">
+        <h2>Máquinas virtuais <span class="count" id="vm-count"></span></h2>
+        <p class="muted small">Da mais recente para a mais antiga.</p>
+        <div class="table-wrap"><table class="table" id="vms">
+          <thead><tr><th>Criada em</th><th>Máquina virtual</th><th>Sistema operacional</th><th>vCPU</th><th>Memória</th>
+            <th>Disco</th><th>Estado</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section class="rep-sec" id="g-removed">
+        <h2>Removidas no período <span class="count" id="rm-count"></span></h2>
+        <div class="table-wrap"><table class="table" id="removed">
+          <thead><tr><th>Removida em</th><th>Máquina virtual</th><th>Sistema operacional</th><th>vCPU</th><th>Memória</th>
+            <th>Disco</th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <p class="muted small rep-foot" id="r-foot"></p>
+    </article>
+  </main>
+</body>
+</html>

@@ -82,7 +82,8 @@ atualizar, rode o mesmo comando.
 | 7. Alertas e notificações (e-mail STARTTLS/TLS, Telegram, webhook HMAC), reconhecimento, agendador | ✅ [docs/08-alertas.md](docs/08-alertas.md) |
 | 7b. Domínio & HTTPS: certificado digital pela tela, validação, Apache com redirect, guardado no banco | ✅ [docs/09-dominio-https.md](docs/09-dominio-https.md) |
 | 8a. Métricas por VM (CPU, memória, disco, rede) do vCenter, vCloud e Hyper-V, tela VMs com gráficos por período | ✅ [docs/10-metricas-vms.md](docs/10-metricas-vms.md) |
-| 8. Dashboards, relatórios (PDF/CSV, 60 meses), backup/restauração | — |
+| 8b. Painel do cliente (contratado x em uso), relatórios por período (consumo e crescimento, PDF/CSV) | ✅ [docs/11-painel-e-relatorios.md](docs/11-painel-e-relatorios.md) |
+| 8c. Backup/restauração | — |
 
 ## Estrutura do repositório
 

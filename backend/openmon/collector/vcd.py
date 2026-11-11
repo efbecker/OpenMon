@@ -9,7 +9,8 @@ muda: o vCD é a camada de nuvem sobre o vCenter). A cada coleta:
 * Query Service em lote (128 registros por página): VDCs, perfis de armazenamento e VMs;
 * cada VDC vira um ativo "datacenter" com CPU e memória usadas x alocadas, cada perfil de
   armazenamento um "datastore" com limite e uso, cada VM um "vm" com vCPU, RAM e disco;
-* o tenant sai das regras: o campo "Pasta / organização" casa com ``Org`` e ``Org/VDC``.
+* o tenant do VDC sai das regras (o campo "Pasta / organização" casa com ``Org`` e ``Org/VDC``) ou de
+  o administrador fixá-lo num cliente; perfis de armazenamento e VMs seguem o tenant do VDC.
 
 * uso real por VM ligada (CPU, memória, disco, throughput de disco e, quando o vCD expõe,
   rede) vem de ``/api/vApp/vm-<id>/metrics/current``, várias VMs em paralelo. Desligue com
@@ -264,6 +265,20 @@ def _types(api: Api) -> tuple[str, str, str]:
     return "orgVdc", "orgVdcStorageProfile", "vm"
 
 
+async def _vapp_dates(api: Api, vms: list[dict[str, Any]]) -> dict[str, str]:
+    """Data de criação das vApps (o registro da VM nem sempre traz a sua): base do relatório de crescimento.
+
+    Só quando alguma VM vem sem ``dateCreated``; falha de permissão aqui não derruba a coleta.
+    """
+    if all(m.get("dateCreated") or m.get("creationDate") for m in vms):
+        return {}
+    try:
+        vapps = await api.query("adminVApp" if api.provider else "vApp")
+    except CollectorError:
+        return {}
+    return {_uuid(v.get("href")): v["creationDate"] for v in vapps if v.get("creationDate")}
+
+
 def _org_filter(integ: Integration) -> list[str]:
     return [str(p).strip().lower() for p in (integ.options.get("orgs") or []) if str(p).strip()]
 
@@ -307,6 +322,7 @@ async def poll(integ: Integration, w: Writer) -> str:
             perf, perf_warning = await _all_vm_metrics(api, integ, [
                 _uuid(m.get("href")) for m in vms if str(m.get("status") or "").upper() == "POWERED_ON"
                 and _uuid(m.get("vdc")) in wanted_vdcs and not m.get("isVAppTemplate")])
+            vapp_created = await _vapp_dates(api, vms)
     except CollectorError:
         raise
     except httpx.HTTPError as exc:
@@ -360,6 +376,12 @@ async def poll(integ: Integration, w: Writer) -> str:
             if mem_used is not None:
                 w.metric(aid, tid, "mem.usage.pct", round(mem_used / mem_alloc * 100, 2))
 
+    # Perfis de armazenamento e VMs ficam com o tenant EFETIVO do VDC: quando o administrador fixa o VDC
+    # num cliente, tudo o que está dentro dele vai junto (cada item ainda pode ser fixado à parte).
+    for vid, info in vdc_info.items():
+        if f"vdc:{vid}" in vdc_ids:
+            info["tenant_id"] = vdc_ids[f"vdc:{vid}"][1]
+
     # Perfis de armazenamento por VDC (limite 0 = ilimitado: só o uso)
     items = []
     for s in sps:
@@ -399,10 +421,8 @@ async def poll(integ: Integration, w: Writer) -> str:
             continue
         mid = _uuid(m.get("href"))
         name = m.get("name") or mid
-        facts = {"name": name, "folder": [info["org"], f"{info['org']}/{info['name']}"],
-                 "resource_pool": [info["name"]]}
-        tid = await w.tenant_for(facts)
-        items.append({"external_id": f"vm:{mid}", "asset_type": "vm", "name": name, "tenant_id": tid,
+        created = m.get("dateCreated") or m.get("creationDate") or vapp_created.get(_uuid(m.get("container")))
+        items.append({"external_id": f"vm:{mid}", "asset_type": "vm", "name": name, "tenant_id": info["tenant_id"],
                       "parent_id": vdc_ids[f"vdc:{_uuid(m.get('vdc'))}"][0],
                       "status": STATUS_VM.get(str(m.get("status") or "").upper(), "unknown"),
                       "hostname": m.get("hostName") or None, "ip": m.get("ipAddress"), "vendor": "VMware",
@@ -411,7 +431,9 @@ async def poll(integ: Integration, w: Writer) -> str:
                                      "guest_os": m.get("guestOs"), "power_state": m.get("status"),
                                      "org": info["org"], "vdc": info["name"], "vapp": m.get("containerName"),
                                      "folder": f"{info['org']}/{info['name']}", "moref": m.get("moref"),
-                                     "storage_profile": m.get("storageProfileName"), "hypervisor": "vcloud"}})
+                                     "storage_profile": m.get("storageProfileName"), "hypervisor": "vcloud",
+                                     "disk_bytes": (m.get("totalStorageAllocatedMb") or 0) * MB or None,
+                                     **({"created_at": str(created)} if created else {})}})
     vm_ids = await w.assets_bulk(items)
     on = 0
     for m in vms:

@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from openmon import __version__
 from openmon.api import (admin_integrations, admin_ldap, admin_rules, admin_security, admin_tenants, admin_tls,
-                         alerts, assets, auth, backups, setup)
+                         alerts, assets, auth, backups, reports, setup)
 
 # Sem /docs nem /openapi.json em produção: menos superfície exposta
 app = FastAPI(title="OpenMon", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
@@ -27,6 +27,7 @@ app.include_router(backups.router)
 app.include_router(admin_rules.router)
 app.include_router(alerts.router)
 app.include_router(admin_tls.router)
+app.include_router(reports.router)
 
 _log = logging.getLogger("openmon.api")
 if not _log.handlers:  # stderr -> journal (journalctl -u openmon-api)
