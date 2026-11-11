@@ -283,3 +283,13 @@ details.advanced.full { grid-column: 1 / -1; margin-top: 0; }
 .grid.inner3 { grid-template-columns: 1.2fr 1fr 1fr; gap: 16px; }
 .grid > p.full { grid-column: 1 / -1; margin: 0; }
 @media (max-width: 720px) { .sev-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid.inner3 { grid-template-columns: 1fr; } }
+
+/* Domínio & HTTPS */
+.cert-box { padding: 16px 18px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--panel-2); }
+.cert-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; font-size: 13px; }
+.kv { overflow-wrap: anywhere; }
+.warn { color: #fbbf24; }
+.tiny { font-size: 11px; overflow-wrap: anywhere; }
+.mt-s { margin-top: 8px; }
+@media (max-width: 720px) { .kv-grid { grid-template-columns: 1fr; } }

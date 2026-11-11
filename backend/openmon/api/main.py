@@ -11,8 +11,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from openmon import __version__
-from openmon.api import (admin_integrations, admin_ldap, admin_rules, admin_security, admin_tenants, alerts, assets,
-                         auth, backups, setup)
+from openmon.api import (admin_integrations, admin_ldap, admin_rules, admin_security, admin_tenants, admin_tls,
+                         alerts, assets, auth, backups, setup)
 
 # Sem /docs nem /openapi.json em produção: menos superfície exposta
 app = FastAPI(title="OpenMon", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
@@ -26,6 +26,7 @@ app.include_router(assets.router)
 app.include_router(backups.router)
 app.include_router(admin_rules.router)
 app.include_router(alerts.router)
+app.include_router(admin_tls.router)
 
 _log = logging.getLogger("openmon.api")
 if not _log.handlers:  # stderr -> journal (journalctl -u openmon-api)
@@ -48,6 +49,21 @@ async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
             detail += f": {text}"
     detail += f". Detalhes no Servidor 1: sudo journalctl -u openmon-api --no-pager | grep -A40 {ref}"
     return JSONResponse({"detail": detail}, status_code=500)
+
+
+@app.on_event("startup")
+async def _reapply_tls() -> None:
+    """VM 1 reinstalada com o mesmo banco: o certificado do domínio volta sozinho (ver admin_tls)."""
+    import asyncio
+
+    async def later() -> None:
+        await asyncio.sleep(10)  # o openmon-tls publica o estado no boot
+        try:
+            await admin_tls.reapply_if_missing()
+        except Exception:  # noqa: BLE001 - nunca derruba a API por isso
+            _log.exception("verificação do certificado HTTPS falhou")
+
+    app.state.tls_task = asyncio.get_running_loop().create_task(later())
 
 
 @app.get("/api/health")

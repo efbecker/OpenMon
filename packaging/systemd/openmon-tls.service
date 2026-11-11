@@ -1,0 +1,22 @@
+# /etc/systemd/system/openmon-tls.service
+# Grava o certificado do domínio no Apache (ou volta ao autoassinado) e publica
+# o estado em /var/lib/openmon/tls/status.json. A API só grava o pedido na fila;
+# quem mexe em /etc/ssl e /etc/apache2 é este oneshot (root), que valida tudo de novo.
+[Unit]
+Description=OpenMon aplica o certificado HTTPS no Apache
+After=apache2.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/openmon/bin/openmon-tls
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+TimeoutStartSec=120s
+
+[Install]
+WantedBy=multi-user.target

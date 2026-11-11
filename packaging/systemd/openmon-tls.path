@@ -1,0 +1,11 @@
+# /etc/systemd/system/openmon-tls.path
+# Aplica o certificado assim que a tela "Domínio & HTTPS" grava um pedido.
+[Unit]
+Description=OpenMon observa pedidos de certificado HTTPS
+
+[Path]
+PathExists=/var/lib/openmon/tls-requests/request.json
+Unit=openmon-tls.service
+
+[Install]
+WantedBy=multi-user.target

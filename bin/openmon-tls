@@ -1,0 +1,230 @@
+#!/usr/bin/python3 -I
+"""Ponte entre a tela "Domínio & HTTPS" do OpenMon e o Apache (roda como root).
+
+A API (usuário openmon, sem privilégios) só grava o pedido em
+/var/lib/openmon/tls-requests/request.json; este programa, disparado pelo
+openmon-tls.path (na hora) e uma vez no boot, faz o seguinte:
+
+* apply: valida de novo o certificado, a chave e o domínio (openmon.tlscert),
+  grava /etc/ssl/certs/openmon-domain.crt (fullchain) e
+  /etc/ssl/private/openmon-domain.key (0640 root:ssl-cert), liga a conf
+  openmon-domain (ServerName = domínio e HTTP redirecionado para
+  https://<domínio>), confere com apache2ctl configtest e recarrega o Apache.
+  Se o configtest falhar, volta exatamente ao que estava.
+* remove: desliga a conf openmon-domain e volta ao certificado autoassinado
+  (/etc/ssl/certs/openmon.crt, que nunca é tocado).
+
+O resultado vai para /var/lib/openmon/tls/status.json (a API só lê). O pedido
+é tratado como não confiável: arquivo regular pequeno do usuário openmon, JSON
+com ação em lista fechada; programas chamados com lista de argumentos.
+"""
+from __future__ import annotations
+
+import grp
+import json
+import os
+import pwd
+import stat
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+APP_DIR = Path(os.environ.get("OPENMON_APP_DIR", "/opt/openmon/app"))
+REQ_DIR = Path(os.environ.get("OPENMON_TLS_REQUESTS", "/var/lib/openmon/tls-requests"))
+STATE_DIR = Path(os.environ.get("OPENMON_TLS_STATE", "/var/lib/openmon/tls"))
+CERT = Path(os.environ.get("OPENMON_TLS_CERT", "/etc/ssl/certs/openmon-domain.crt"))
+KEY = Path(os.environ.get("OPENMON_TLS_KEY", "/etc/ssl/private/openmon-domain.key"))
+SELF_CERT = Path(os.environ.get("OPENMON_TLS_SELF_CERT", "/etc/ssl/certs/openmon.crt"))
+CONF = Path(os.environ.get("OPENMON_TLS_CONF", "/etc/apache2/conf-available/openmon-domain.conf"))
+CONF_ENABLED = Path(os.environ.get("OPENMON_TLS_CONF_ENABLED", "/etc/apache2/conf-enabled/openmon-domain.conf"))
+APACHECTL = os.environ.get("OPENMON_TLS_APACHECTL", "/usr/sbin/apache2ctl")
+SYSTEMCTL = os.environ.get("OPENMON_TLS_SYSTEMCTL", "/usr/bin/systemctl")
+SERVICE_USER = os.environ.get("OPENMON_TLS_USER", "openmon")
+SERVICE_GROUP = os.environ.get("OPENMON_TLS_GROUP", "openmon")
+KEY_GROUP = os.environ.get("OPENMON_TLS_KEY_GROUP", "ssl-cert")
+MAX_REQUEST_BYTES = 600_000
+
+sys.path.insert(0, str(APP_DIR))
+from openmon import tlscert  # noqa: E402
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def gid(name: str) -> int:
+    try:
+        return grp.getgrnam(name).gr_gid
+    except KeyError:
+        return 0
+
+
+def write_file(path: Path, data: str, mode: int, group: str | None = None) -> None:
+    """Grava atômico (tmp + rename), sem seguir links, com dono root e o grupo pedido."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(data)
+        os.chown(tmp, 0, gid(group) if group else 0)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def run(*args: str) -> tuple[int, str]:
+    try:
+        p = subprocess.run(list(args), capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def read_request() -> dict | None:
+    path = REQ_DIR / "request.json"
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    try:
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_REQUEST_BYTES:
+            raise ValueError("pedido inválido")
+        try:
+            owner = pwd.getpwnam(SERVICE_USER).pw_uid
+        except KeyError:
+            owner = st.st_uid
+        if st.st_uid not in (0, owner):
+            raise ValueError("pedido de outro usuário")
+        with open(path, encoding="utf-8") as fh:
+            req = json.load(fh)
+        if not isinstance(req, dict) or req.get("action") not in ("apply", "remove"):
+            raise ValueError("ação inválida")
+        return req
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def current() -> dict:
+    """O que está valendo agora no Apache."""
+    active = CONF_ENABLED.exists() and CERT.is_file()
+    path = CERT if active else SELF_CERT
+    info = None
+    try:
+        info = tlscert.info_from_pem(path.read_text(encoding="utf-8"))
+    except (OSError, tlscert.CertError):
+        pass
+    domain = None
+    if active:
+        for line in CONF.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Define OPENMON_FQDN "):
+                domain = line.split()[2]
+    return {"mode": "custom" if active else "self-signed", "domain": domain, "info": info}
+
+
+def apache_reload() -> tuple[bool, str]:
+    rc, out = run(APACHECTL, "configtest")
+    if rc != 0:
+        return False, "configuração do Apache recusada: " + out[-500:]
+    rc, out = run(SYSTEMCTL, "reload", "apache2")
+    if rc != 0:
+        return False, "o Apache não recarregou: " + out[-500:]
+    return True, ""
+
+
+def backup(paths: list[Path]) -> dict[Path, bytes | None]:
+    saved: dict[Path, bytes | None] = {}
+    for p in paths:
+        saved[p] = p.read_bytes() if p.is_file() and not p.is_symlink() else None
+    saved[CONF_ENABLED] = b"link" if CONF_ENABLED.exists() or CONF_ENABLED.is_symlink() else None
+    return saved
+
+
+def restore(saved: dict[Path, bytes | None]) -> None:
+    for p, data in saved.items():
+        if p == CONF_ENABLED:
+            continue
+        if data is None:
+            p.unlink(missing_ok=True)
+        else:
+            p.write_bytes(data)
+    if saved[CONF_ENABLED] is None:
+        CONF_ENABLED.unlink(missing_ok=True)
+    elif not CONF_ENABLED.exists():
+        CONF_ENABLED.symlink_to(f"../conf-available/{CONF.name}")
+
+
+def enable_conf() -> None:
+    if not (CONF_ENABLED.exists() or CONF_ENABLED.is_symlink()):
+        CONF_ENABLED.parent.mkdir(parents=True, exist_ok=True)
+        CONF_ENABLED.symlink_to(f"../conf-available/{CONF.name}")
+
+
+def apply(req: dict) -> tuple[bool, str]:
+    try:
+        v = tlscert.validate(str(req.get("domain") or ""), str(req.get("fullchain") or ""),
+                             str(req.get("key") or ""))
+    except tlscert.CertError as exc:
+        return False, str(exc)
+    saved = backup([CERT, KEY, CONF])
+    try:
+        write_file(CERT, v["fullchain"], 0o644)
+        write_file(KEY, v["key"], 0o640, KEY_GROUP)
+        write_file(CONF, "# Gerado pelo openmon-tls (tela Domínio & HTTPS). Não edite à mão.\n"
+                         "Define OPENMON_HTTPS_DOMAIN\n"
+                         f"Define OPENMON_FQDN {v['domain']}\n", 0o644)
+        enable_conf()
+        ok, msg = apache_reload()
+    except OSError as exc:
+        ok, msg = False, f"falha ao gravar os arquivos: {exc}"
+    if not ok:
+        restore(saved)
+        run(SYSTEMCTL, "reload", "apache2")
+        return False, msg
+    return True, f"HTTPS ativo em https://{v['domain']}/"
+
+
+def remove() -> tuple[bool, str]:
+    saved = backup([CERT, KEY, CONF])
+    CONF_ENABLED.unlink(missing_ok=True)
+    ok, msg = apache_reload()
+    if not ok:
+        restore(saved)
+        run(SYSTEMCTL, "reload", "apache2")
+        return False, msg
+    for p in (CERT, KEY, CONF):
+        p.unlink(missing_ok=True)
+    return True, "certificado removido; voltou ao autoassinado"
+
+
+def write_status(last: dict | None) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    old = {}
+    try:
+        old = json.loads((STATE_DIR / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    data = {**current(), "last": last if last is not None else old.get("last"), "updated_at": now()}
+    write_file(STATE_DIR / "status.json", json.dumps(data, ensure_ascii=False), 0o640, SERVICE_GROUP)
+
+
+def main() -> int:
+    last = None
+    try:
+        req = read_request()
+    except (OSError, ValueError) as exc:
+        req, last = None, {"id": None, "ok": False, "message": f"pedido recusado: {exc}", "at": now()}
+    if req is not None:
+        ok, msg = apply(req) if req["action"] == "apply" else remove()
+        last = {"id": str(req.get("id") or "")[:64], "action": req["action"], "ok": ok, "message": msg[:1000],
+                "at": now()}
+        print(("OK: " if ok else "ERRO: ") + msg)
+    write_status(last)
+    return 0 if last is None or last["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

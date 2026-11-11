@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Domínio &amp; HTTPS</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/https.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/alertas.html">Alertas</a>
+        <a href="/inventario.html">Inventário</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+        <a href="/https.html" data-nav="admin" class="active" aria-current="page">HTTPS</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page" id="main" hidden>
+    <section class="card">
+      <h2>Domínio &amp; HTTPS</h2>
+      <p class="muted small">Envie o certificado do domínio e a chave privada. O OpenMon valida os arquivos, ativa HTTPS
+        na porta 443 com esse certificado e redireciona todo acesso HTTP para o domínio. O certificado fica gravado no
+        banco (a chave, cifrada no cofre) e volta sozinho numa reinstalação do Servidor 1 que use o mesmo banco.</p>
+
+      <div class="cert-box mt" id="current"></div>
+      <p class="ok-text small" id="flash" hidden></p>
+      <p class="error-text" id="state-error" hidden></p>
+
+      <h3 class="subhead" id="form-title">Enviar certificado</h3>
+      <form id="form" novalidate autocomplete="off">
+        <label class="field">
+          <span class="label">Domínio</span>
+          <input id="f-domain" maxlength="253" spellcheck="false" autocapitalize="off" placeholder="openmon.empresa.com.br">
+          <span class="muted small">O DNS do domínio precisa apontar para este servidor e a porta 443 precisa estar liberada.</span>
+        </label>
+        <div class="grid inner3 mt">
+          <label class="field">
+            <span class="label">Certificado</span>
+            <input id="f-cert" type="file" accept=".pem,.crt,.cer,.cert,.txt">
+            <span class="muted small">PEM ou CRT. Pode ser o fullchain (certificado + intermediários).</span>
+          </label>
+          <label class="field">
+            <span class="label">Chave privada</span>
+            <input id="f-key" type="file" accept=".pem,.key,.txt">
+            <span class="muted small" id="key-hint">PEM/KEY sem senha.</span>
+          </label>
+          <label class="field">
+            <span class="label">Cadeia intermediária (opcional)</span>
+            <input id="f-chain" type="file" accept=".pem,.crt,.cer,.cert,.txt">
+            <span class="muted small">Só se o certificado acima não incluir os intermediários.</span>
+          </label>
+        </div>
+        <p class="error-text" id="form-error" hidden></p>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button type="submit" class="btn deploy" id="btn-save">Validar e ativar HTTPS</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Só o Administrador global configura o domínio e o certificado.</p>
+    </section>
+  </main>
+</body>
+</html>

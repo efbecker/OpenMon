@@ -47,3 +47,13 @@ def fail2ban_state_dir() -> Path:
 def fail2ban_requests_dir() -> Path:
     """Fila de pedidos de bloqueio/desbloqueio que a API grava."""
     return _path("OPENMON_F2B_REQUESTS", str(state_dir() / "fail2ban-requests"))
+
+
+def tls_state_dir() -> Path:
+    """Estado publicado pelo openmon-tls (root): certificado ativo e resultado do último pedido."""
+    return _path("OPENMON_TLS_STATE", str(state_dir() / "tls"))
+
+
+def tls_requests_dir() -> Path:
+    """Pedido de aplicar/remover o certificado que a API grava para o openmon-tls."""
+    return _path("OPENMON_TLS_REQUESTS", str(state_dir() / "tls-requests"))

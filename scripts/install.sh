@@ -253,6 +253,10 @@ systemctl restart fail2ban || warn "o Fail2ban não reiniciou; veja: journalctl 
 # Tela Segurança: bloqueios manuais e estado do Fail2ban (ponte root, sem sudo na API)
 systemctl enable --now --quiet openmon-fail2ban.path openmon-fail2ban.timer
 systemctl start openmon-fail2ban.service || warn "openmon-fail2ban falhou; veja: journalctl -u openmon-fail2ban"
+# Tela Domínio & HTTPS: certificado do domínio no Apache (ponte root, sem sudo na API)
+systemctl enable --now --quiet openmon-tls.path
+systemctl enable --quiet openmon-tls.service
+systemctl start openmon-tls.service || warn "openmon-tls falhou; veja: journalctl -u openmon-tls"
 
 # Token de instalação: libera o assistente web (deploy do banco + primeiro
 # administrador) até a instalação terminar, marcada por $STATE_DIR/setup.done
