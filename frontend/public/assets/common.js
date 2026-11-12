@@ -49,6 +49,10 @@ window.OpenMon = (function () {
     return out;
   }
 
+  const CLIENT_REDIRECT = { "/home.html": "/painel.html", "/inventario.html": "/vms.html" };
+  const GLOBAL_ONLY = new Set(["/integracoes.html", "/tenants.html", "/usuarios.html", "/ad.html", "/seguranca.html",
+    "/https.html"]);
+
   // Sessão, chip do usuário, menu e botão Sair. Devolve o /me ou null (já redirecionou).
   async function boot(opts) {
     opts = opts || {};
@@ -59,9 +63,15 @@ window.OpenMon = (function () {
     if (u.must_change_password && !opts.allowPasswordChange) { location.replace("/senha.html"); return null; }
     const chip = $("user-chip");
     if (chip) chip.textContent = `${u.display_name || u.username} · ${ROLE[u.role] || u.role_name || u.role}`;
-    document.querySelectorAll("[data-nav]").forEach((a) => {
+    // Telas que o cliente não usa: o Painel faz o papel do Início e a tela VMs substitui o Inventário.
+    // Vale pelo caminho, não só pelo data-nav, para não depender do HTML que o navegador guardou.
+    const isGlobal = u.scope === "global";
+    if (!isGlobal && CLIENT_REDIRECT[location.pathname]) { location.replace(CLIENT_REDIRECT[location.pathname]); return null; }
+    document.querySelectorAll("#nav a, [data-nav]").forEach((a) => {
       const need = a.getAttribute("data-nav");
-      a.hidden = (need === "admin" && u.role !== "global_admin") || (need === "global" && u.scope !== "global");
+      const path = (a.getAttribute("href") || "").split("?")[0];
+      a.hidden = (need === "admin" && u.role !== "global_admin") || (need === "global" && !isGlobal)
+        || (!isGlobal && (CLIENT_REDIRECT[path] !== undefined || GLOBAL_ONLY.has(path)));
     });
     const nav = $("nav");
     if (nav) nav.hidden = u.must_change_password;
