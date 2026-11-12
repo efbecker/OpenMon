@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenMon · Branding</title>
+  <link rel="icon" href="assets/openmon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/openmon.css?v=__VERSION__">
+  <script src="assets/branding.js?v=__VERSION__" defer></script>
+  <script src="assets/common.js?v=__VERSION__" defer></script>
+  <script src="assets/branding-admin.js?v=__VERSION__" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/openmon.svg" alt="" width="28" height="28">
+      <span>OpenMon</span>
+      <nav class="nav" id="nav" hidden>
+        <a href="/home.html">Início</a>
+        <a href="/painel.html">Painel</a>
+        <a href="/relatorios.html">Relatórios</a>
+        <a href="/alertas.html">Alertas</a>
+        <a href="/inventario.html" data-nav="global">Inventário</a>
+        <a href="/vms.html">VMs</a>
+        <a href="/backups.html">Backups</a>
+        <a href="/integracoes.html" data-nav="global">Integrações</a>
+        <a href="/tenants.html" data-nav="global">Tenants</a>
+        <a href="/usuarios.html" data-nav="admin">Usuários</a>
+        <a href="/ad.html" data-nav="admin">AD/LDAP</a>
+        <a href="/seguranca.html" data-nav="admin">Segurança</a>
+        <a href="/https.html" data-nav="admin">HTTPS</a>
+        <a href="/branding.html" data-nav="admin" class="active" aria-current="page">Branding</a>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <a class="user-chip" id="user-chip" href="/senha.html" title="Trocar minha senha"></a>
+      <button type="button" class="btn ghost" id="btn-logout">Sair</button>
+    </div>
+  </header>
+
+  <main class="page" id="main" hidden>
+    <section class="card">
+      <h2>Branding &amp; identidade visual</h2>
+      <p class="muted small">Personalize o logo, o favicon e a imagem da tela de login com a identidade da sua empresa.
+        O logo aparece no cabeçalho de todas as telas, na tela de login e nos relatórios dos clientes. As imagens ficam
+        gravadas no banco e voltam sozinhas numa reinstalação do Servidor 1 que use o mesmo banco.</p>
+      <p class="ok-text small" id="flash" hidden></p>
+      <p class="error-text" id="state-error" hidden></p>
+
+      <div class="brand-slots mt" id="slots"></div>
+    </section>
+  </main>
+
+  <main class="page" id="denied" hidden>
+    <section class="card">
+      <h2>Acesso restrito</h2>
+      <p class="muted">Só o Administrador global altera o branding.</p>
+    </section>
+  </main>
+</body>
+</html>
