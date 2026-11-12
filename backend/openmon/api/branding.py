@@ -66,14 +66,52 @@ def sniff(data: bytes) -> str | None:
         return "webp"
     if data.startswith(b"\x00\x00\x01\x00") and len(data) >= 22:
         return "ico"
-    head = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
-    if (head.startswith(b"<svg") or head.startswith(b"<?xml") or head.startswith(b"<!--")) and b"<svg" in head:
+    head = data[:65536].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    if head.startswith((b"<svg", b"<?xml", b"<!--", b"<!doctype")) and b"<svg" in head:
         return "svg"
     return None
 
 
+_DOCTYPE = re.compile(rb"<!DOCTYPE\s[^\[>]*(?:\[(.*?)\])?\s*>", re.I | re.S)
+_ENTITY = re.compile(rb"<!ENTITY\s+([A-Za-z_][\w.-]*)\s+(?:\"([^\"<&%]*)\"|'([^'<&%]*)')\s*>", re.S)
+
+
+def clean_svg(data: bytes) -> bytes:
+    """Tira o DOCTYPE que o Illustrator/Inkscape põem no SVG.
+
+    Entidades simples do subconjunto interno (``<!ENTITY ns_svg "http://...">``, comuns no Illustrator) são
+    trocadas pelo valor no texto; qualquer outra coisa no DOCTYPE faz o arquivo ser recusado.
+    """
+    m = _DOCTYPE.search(data)
+    out = data if not m else _strip_doctype(data, m)
+    if re.search(rb"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-f]+);)[A-Za-z_][\w.-]*;", out, re.I):
+        raise BrandingError("SVG com entidades desconhecidas não é aceito. Exporte o logo como SVG simples ou PNG.")
+    return out
+
+
+def _strip_doctype(data: bytes, m: re.Match[bytes]) -> bytes:
+    subset = m.group(1) or b""
+    entities: dict[bytes, bytes] = {}
+    rest = subset
+    for e in _ENTITY.finditer(subset):
+        entities[e.group(1)] = e.group(2) if e.group(2) is not None else e.group(3)
+        rest = rest.replace(e.group(0), b"")
+    rest = re.sub(rb"<!--.*?-->", b"", rest, flags=re.S)
+    if rest.strip():
+        raise BrandingError("SVG com DOCTYPE complexo não é aceito. Exporte o logo como SVG simples ou PNG.")
+    out = data[:m.start()] + data[m.end():]
+    for name, value in entities.items():
+        out = out.replace(b"&" + name + b";", value)
+    return out
+
+
 def validate(kind: str, data: bytes) -> str:
-    """Confere tamanho e formato; devolve o tipo (png, jpeg, ...)."""
+    """Confere tamanho e formato; devolve o tipo (png, jpeg, ...). Use ``prepare`` para o SVG já limpo."""
+    return prepare(kind, data)[0]
+
+
+def prepare(kind: str, data: bytes) -> tuple[str, bytes]:
+    """Confere tamanho e formato; devolve o tipo e o conteúdo a guardar (SVG sem DOCTYPE)."""
     spec = KINDS[kind]
     if not data:
         raise BrandingError("Arquivo vazio.")
@@ -88,10 +126,11 @@ def validate(kind: str, data: bytes) -> str:
             data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise BrandingError("SVG precisa estar em UTF-8.") from exc
+        data = clean_svg(data)
         if _SVG_FORBIDDEN.search(data):
             raise BrandingError("SVG com script, eventos, DOCTYPE ou referências externas não é aceito. "
                                 "Exporte o logo como SVG simples ou PNG.")
-    return fmt
+    return fmt, data
 
 
 def _meta(kind: str, v: dict[str, Any]) -> dict[str, Any]:
@@ -174,13 +213,13 @@ async def upload(kind: str, request: Request,
         if len(data) > limit:
             raise HTTPException(413, f"{KINDS[kind]['label']}: arquivo maior que o permitido ({KINDS[kind]['hint']}).")
     try:
-        fmt = validate(kind, bytes(data))
+        fmt, data = prepare(kind, bytes(data))
     except BrandingError as exc:
         raise HTTPException(422, str(exc)) from exc
     filename = re.sub(r"[^\w .()-]", "_", unquote(request.headers.get("x-filename", "")))[:120].strip() or None
     value = {"mime": MIME[fmt], "size": len(data), "sha256": hashlib.sha256(data).hexdigest(), "filename": filename,
              "uploaded_by": session.user["username"], "uploaded_at": datetime.now(timezone.utc).isoformat(),
-             "data": base64.b64encode(bytes(data)).decode("ascii")}
+             "data": base64.b64encode(data).decode("ascii")}
     try:
         async with session.db() as conn:
             await conn.execute(
