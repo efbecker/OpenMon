@@ -12,7 +12,8 @@
   const STATUS = { ok: ["tag-ok", "ok"], warning: ["tag-auto", "aviso"], error: ["tag-bad", "erro"] };
   const DETAIL = { uptime_days: "No ar há (dias)", ip: "IP", vendor: "Fabricante", version: "Versão", build: "Build",
     product: "Produto", api_version: "Versão da API", provider: "Conta do provedor", orgs: "Organizações",
-    vdcs: "VDCs", orgs_matched: "Organizações no filtro", vms: "VMs", hosts: "Hosts", datastores: "Datastores", jobs: "Jobs", repositories: "Repositórios" };
+    vdcs: "VDCs", orgs_matched: "Organizações no filtro", vms: "VMs", hosts: "Hosts", datastores: "Datastores", jobs: "Jobs", repositories: "Repositórios",
+    organizations: "Quotas de organização (vCloud)", diagnostic: "Diagnóstico", api: "API" };
   let items = [];
   let tenants = [];
   let canManage = false;

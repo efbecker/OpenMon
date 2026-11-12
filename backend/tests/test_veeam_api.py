@@ -36,7 +36,12 @@ def sess(uid, job_uid, created, ended, state, result):
 class FakeEm:
     """O suficiente da API REST do Enterprise Manager: sessionMngr + serviço de consulta."""
 
-    def __init__(self):
+    def __init__(self, style="pascal", query=True):
+        self.style, self.query = style, query  # formatos que o EM devolve conforme a versão
+        self.orgs = [{"OrganizationName": "ACME", "RepositoryFriendlyName": "Repo Cloud", "QuotaGb": 1000,
+                      "UsedQuotaMb": 512000, "IsEnabled": True, "UID": "urn:veeam:VCloudOrganizationConfig:o1"},
+                     {"OrganizationName": "Beta", "QuotaMb": 1024, "UsedSpaceMb": 0, "IsEnabled": False,
+                      "UID": "urn:veeam:VCloudOrganizationConfig:o2"}]
         self.calls = []
         self.jobs = [job("j1", "ACME - Diário"), job("j2", "BETA - SQL"), job("j3", "Infra"),
                      job("j4", "Antigo", ScheduleEnabled=False)]
@@ -63,6 +68,20 @@ class FakeEm:
             return httpx.Response(401, json={"Message": "no session"})
         if path == "/api/logonSessions/abc" and request.method == "DELETE":
             return httpx.Response(204)
+        if path == "/api/vCloud/orgConfigs":
+            return self.out({"VCloudOrganizationConfigs": {"VCloudOrganizationConfig": self.orgs}})
+        direct = {"/api/jobs": ("Jobs", "Job", self.jobs), "/api/repositories": ("Repositories", "Repository", [
+            {"UID": "urn:veeam:Repository:r1", "Name": "Repo 1", "Kind": "WinLocal", "Capacity": 10 * 1024 ** 4,
+             "FreeSpace": 2 * 1024 ** 4}]), "/api/backupServers": ("BackupServers", "BackupServer", [
+                 {"Name": "vbr01", "Version": "12.1.2.172", "UID": "urn:veeam:BackupServer:b1"},
+                 {"Name": "vbr02", "Version": "12.1.2.172", "UID": "urn:veeam:BackupServer:b2"}]),
+            "/api/backupSessions": (
+            "BackupJobSessions", "BackupJobSession", self.sessions)}
+        if path in direct:
+            outer, inner, data = direct[path]
+            return self.out({outer: {inner: data}})
+        if path == "/api/query" and not self.query:
+            return self.out({"Entities": {}, "PagingInfo": {"PagesCount": 0}})
         if path == "/api/query":
             t = request.url.params["type"]
             if t == "BackupServer":
@@ -80,14 +99,34 @@ class FakeEm:
                 key = "BackupJobSessions"
             else:
                 return httpx.Response(400, json={"Message": "bad type"})
-            return httpx.Response(200, json={"Entities": {key: {key: data}},
-                                             "PagingInfo": {"PageNum": 1, "PageSize": 500, "PagesCount": 1}})
+            return self.out({"Refs": [{"UID": d["UID"], "Type": "JobReference"} for d in data[:1]],
+                             "Entities": {key: {key: data}},
+                             "PagingInfo": {"PageNum": 1, "PageSize": 500, "PagesCount": 1}})
         return httpx.Response(404, json={"Message": "Resource does not exist"})
 
+    def out(self, body):
+        if self.style == "camel":
+            def camel(o):
+                if isinstance(o, dict):
+                    return {k[:1].lower() + k[1:]: camel(v) for k, v in o.items()}
+                return [camel(x) for x in o] if isinstance(o, list) else o
+            return httpx.Response(200, json=camel(body))
+        if self.style == "xml":
+            def xml(tag, v):
+                if isinstance(v, dict):
+                    return f"<{tag}>" + "".join(
+                        "".join(xml(k, x) for x in i) if isinstance(i, list) else xml(k, i)
+                        for k, i in v.items()) + f"</{tag}>"
+                return f"<{tag}>{'' if v is None else str(v).lower() if isinstance(v, bool) else v}</{tag}>"
+            (root, inner), = (body if len(body) == 1 else {"QueryResult": body}).items()
+            return httpx.Response(200, text='<?xml version="1.0"?>' + xml(root, inner),
+                                  headers={"content-type": "application/xml"})
+        return httpx.Response(200, json=body)
 
-@pytest.fixture
-def em(monkeypatch):
-    f = FakeEm()
+
+@pytest.fixture(params=[("pascal", True), ("camel", True), ("xml", False)], ids=["pascal", "camel", "xml-sem-query"])
+def em(request, monkeypatch):
+    f = FakeEm(*request.param)
     monkeypatch.setattr(veeam, "_transport", httpx.MockTransport(f.handler))
     return f
 
@@ -131,9 +170,13 @@ def test_enterprise_manager_data_in_vbr_shape(em):
             repos = await api.repositories()
             sessions = await api.sessions(NOW - timedelta(days=7), ["s0", "s4"])
             jobs = await api.jobs(sessions)
-        return repos, sessions, jobs
-    repos, sessions, jobs = asyncio.run(run())
+            orgs = await api.org_quotas()
+        return repos, sessions, jobs, orgs
+    repos, sessions, jobs, orgs = asyncio.run(run())
     assert repos == [{"id": "r1", "name": "Repo 1", "type": "WinLocal", "capacityGB": 10240.0, "freeGB": 2048.0}]
+    assert orgs == [{"id": "o1", "org": "ACME", "repo": "Repo Cloud", "quota": 1000 * 1024 ** 3,
+                     "used": 500 * 1024 ** 3, "enabled": True},
+                    {"id": "o2", "org": "Beta", "repo": "Beta", "quota": 1024 ** 3, "used": 0, "enabled": False}]
     assert [s["id"] for s in sessions] == ["s1", "s2", "s3", "s4"]  # s0 fora da janela; s4 sem duplicar
     assert [veeam._session_result(s) for s in sessions] == ["failed", "success", "failed", "running"]
     assert sessions[3]["endTime"] is None and veeam._ts(sessions[0]["creationTime"]).tzinfo is not None
@@ -161,3 +204,16 @@ def test_vbr_rest_api_still_default_on_9419(monkeypatch):
     out = asyncio.run(veeam.test(integ(port=9419)))
     assert out["details"]["api"] == "vbr" and "7 job(s)" in out["summary"]
     assert "/api/sessionMngr/" not in seen
+
+
+def test_enterprise_manager_summary_counts_vcloud_orgs(em):
+    out = asyncio.run(veeam.test(integ()))
+    assert "2 quota(s) de organização do vCloud" in out["summary"] and out["details"]["organizations"] == 2
+
+
+def test_enterprise_manager_empty_shows_diagnostic(monkeypatch):
+    f = FakeEm()
+    f.jobs, f.sessions, f.orgs = [], [], []
+    monkeypatch.setattr(veeam, "_transport", httpx.MockTransport(f.handler))
+    out = asyncio.run(veeam.test(integ()))
+    assert "0 job(s)" in out["summary"] and "query Job" in out["details"]["diagnostic"], out

@@ -130,6 +130,13 @@ Duas APIs, escolhidas em "API do Veeam" (padrão **Automático**, pela porta):
   estado do job: o último resultado sai da sessão mais recente dele (um job sem execução na janela mantém o
   último resultado conhecido).
 
+As respostas do Enterprise Manager mudam entre versões (JSON em PascalCase ou camelCase, ou XML): o coletor acha
+as entidades pelo UID (`urn:veeam:Job:...`) em qualquer nível e, se o serviço de consulta (`/api/query`) não
+trouxer nada, lê as coleções diretas (`/api/jobs`, `/api/repositories`, `/api/backupSessions`). Pelo EM também
+vêm as **quotas de backup das organizações do vCloud Director** (`/api/vCloud/orgConfigs`): cada org/repositório
+vira um repositório de backup com quota, uso e livre, no tenant da regra de "Pasta / organização". Quando nada é
+encontrado, o "Testar conexão" e a coleta mostram o formato que o Veeam devolveu, para diagnóstico.
+
 No modo automático a 9398 vai direto ao Enterprise Manager e as outras portas à API do VBR; se o login responder
 404, a outra API é tentada na mesma porta.
 
