@@ -167,6 +167,7 @@
         ["Ambiente", o.vdcs.map((d) => d.vdc).join(", ") || "—"], ["Emitido em", new Date().toLocaleDateString("pt-BR")]]);
       if (kind === "growth") renderGrowth(data, o); else renderConsumption(data, o);
       $("print").disabled = false;
+      $("html").disabled = false;
       $("csv").disabled = false;
       const u = new URLSearchParams({ tenant, kind });
       if ($("start").value) u.set("start", $("start").value);
@@ -176,6 +177,81 @@
       showError("error", e.message);
     } finally {
       $("go").disabled = false;
+    }
+  }
+
+  function fileName(ext) {
+    const L = state.last;
+    const t = L.data.tenant;
+    return `${L.kind === "growth" ? "crescimento" : "consumo"}-${t.slug || t.id}-${iso(new Date())}.${ext}`;
+  }
+
+  function download(blob, name) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  async function dataUrl(src) {
+    try {
+      const r = await fetch(src, { credentials: "same-origin" });
+      const b = await r.blob();
+      return await new Promise((ok) => { const f = new FileReader(); f.onload = () => ok(f.result); f.readAsDataURL(b); });
+    } catch (_) { return src; }
+  }
+
+  // Gráfico como imagem nítida (2x) para o arquivo HTML
+  function chartImage(canvas) {
+    const ch = window.Chart && window.Chart.getChart(canvas);
+    if (!ch) return canvas.toDataURL("image/png");
+    const old = ch.options.devicePixelRatio;
+    ch.options.devicePixelRatio = 2;
+    ch.resize();
+    const url = canvas.toDataURL("image/png");
+    ch.options.devicePixelRatio = old;
+    ch.resize();
+    return url;
+  }
+
+  // Relatório em HTML: um arquivo só (estilo, logo e gráficos embutidos), abre offline em qualquer navegador
+  async function htmlExport() {
+    const L = state.last;
+    if (!L) return;
+    $("html").disabled = true;
+    try {
+      const src = $("report");
+      const clone = src.cloneNode(true);
+      clone.hidden = false;
+      clone.querySelectorAll("[hidden]").forEach((n) => n.remove());
+      const live = src.querySelectorAll("canvas");
+      clone.querySelectorAll("canvas").forEach((c, i) => {
+        const img = document.createElement("img");
+        img.src = chartImage(live[i]);
+        img.alt = c.getAttribute("aria-label") || "";
+        img.className = "chart-img";
+        c.replaceWith(img);
+      });
+      for (const img of clone.querySelectorAll("img:not(.chart-img)")) {
+        img.src = await dataUrl(img.getAttribute("src"));
+      }
+      let css = "";
+      try { css = await (await fetch("assets/openmon.css", { credentials: "same-origin" })).text(); } catch (_) { /* sem estilo */ }
+      css += "\n.chart-img { display: block; width: 100%; height: 100%; object-fit: contain; }"
+        + "\nbody { padding: 24px 0; } .rep-gen { margin-top: 8px; }";
+      const title = `${$("r-kind").textContent} · ${L.data.tenant.name}`;
+      const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      const doc = "<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\">\n"
+        + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        + `<title>${esc(title)}</title>\n<style>\n${css}\n</style>\n</head>\n<body>\n`
+        + `<main class="page wide">\n${clone.outerHTML}\n<p class="muted small rep-gen">Gerado pelo OpenMon em ${esc(new Date().toLocaleString("pt-BR"))}.</p>\n</main>\n</body>\n</html>\n`;
+      download(new Blob([doc], { type: "text/html;charset=utf-8" }), fileName("html"));
+    } catch (e) {
+      showError("error", `Não foi possível gerar o HTML: ${e.message}`);
+    } finally {
+      $("html").disabled = false;
     }
   }
 
@@ -236,6 +312,7 @@
     $("form").addEventListener("submit", (ev) => { ev.preventDefault(); generate(); });
     $("print").addEventListener("click", () => window.print());
     $("csv").addEventListener("click", csv);
+    $("html").addEventListener("click", htmlExport);
     $("main").hidden = false;
     if (!tid) { showError("error", "Nenhum cliente disponível para o seu usuário."); return; }
     generate();
