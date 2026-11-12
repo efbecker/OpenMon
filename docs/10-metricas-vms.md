@@ -142,6 +142,9 @@ pasta, MoRef, provider VDC, nome do vCenter, `external_id` e a integração de o
   Problemas ativos vêm da mesma regra. Sem VMware Tools só há o disco no datastore (usado/provisionado, com
   snapshots, pode passar de 100 %): ele aparece como DATASTORE no card, sem cor e fora da saúde e dos alertas.
 * O Início saiu do menu: todos entram no Painel.
+* Botão **Tela cheia (NOC)**: esconde menu e filtros e encaixa o painel em 1920x1080 sem rolagem; os cards que
+  não cabem giram em páginas a cada 15 s (os que precisam de atenção vêm primeiro). Esc ou o botão saem.
+* O card "Problemas ativos" saiu; o indicador do topo soma alertas abertos e leituras acima dos limites.
 * Para o cliente, a tela VMs substitui o Inventário e os Alertas (o menu Inventário só aparece para o provedor) e o Painel
   mostra só o contratado x em uso e o consumo no período.
 * **Gráficos**: períodos de 1 hora a 1 ano ou datas escolhidas; CPU e memória (média e pico), disco

@@ -247,7 +247,7 @@
     if (!items.length) $(id).replaceChildren(el("li", { cls: "muted small", text: "Sem leituras." }));
   }
 
-  // Problemas ativos = alertas abertos + o que a leitura atual já mostra acima dos limites da tela
+  // Indicador "Problemas ativos" = alertas abertos + o que a leitura atual já mostra acima dos limites da tela
   // (volume do sistema, CPU e memória). Assim o card nunca diz "nenhum problema" com um disco em vermelho,
   // mesmo antes de o alerta abrir (ele confirma na janela de avaliação) ou se o alerta estiver desligado.
   const SEV_RANK = { disaster: 0, high: 1, average: 2, warning: 3, info: 4 };
@@ -288,22 +288,6 @@
       if (v.mempct !== undefined && v.mempct >= WARN.mem) add(a, "mem", v.mempct >= CRIT.mem ? "high" : "warning", `Memória em ${pct(Math.round(v.mempct))}`, v.mempct);
     });
     return out.sort((x, y) => (SEV_RANK[x.sev] ?? 9) - (SEV_RANK[y.sev] ?? 9) || y.score - x.score);
-  }
-
-  function renderProblems(items) {
-    if (!items.length) {
-      $("problems").replaceChildren(el("div", { cls: "empty-ok" }, el("div", { cls: "ok-text", text: "✓ Nenhum problema em aberto" }),
-        el("div", { cls: "muted small", text: "Nenhum alerta aberto e nenhuma VM acima dos limites agora." })));
-      return;
-    }
-    const shown = items.slice(0, 8);
-    $("problems").replaceChildren(el("ul", { cls: "prob-list" }, ...shown.map((p) => {
-      const li = el("li", { cls: "clickable" }, el("span", { cls: "tag sev-" + p.sev, text: SEV[p.sev] || p.sev }),
-        el("div", null, el("strong", { text: p.a.name }), el("div", { cls: "muted small", text: p.text })),
-        el("span", { cls: "muted small", text: p.when, title: p.when === "agora" ? "Leitura atual" : "Alerta aberto há" }));
-      li.addEventListener("click", () => openDetail(p.a.id, true));
-      return li;
-    })), items.length > shown.length ? el("p", { cls: "muted small center", text: `+${items.length - shown.length} abaixo` }) : "");
   }
 
   function renderVolumes(list) {
@@ -442,10 +426,62 @@
     const on = list.filter((a) => vmValues(a).on);
     rank("top-cpu", top(on, "cpu", 5), "cpu");
     rank("top-mem", top(on, "mempct", 5), "mem");
-    renderProblems(issues(list));
+    nocLayout();
     renderVolumes(list);
     renderOs(list);
   }
+
+  // ---------- Tela cheia (NOC): cabe em 1920x1080 sem rolagem; os cards que não cabem giram em páginas
+  const NOC_PAGE_SECONDS = 15;
+  let nocPage = 0;
+  let nocTimer = null;
+
+  function nocOn() { return document.body.classList.contains("noc"); }
+
+  function nocLayout() {
+    const box = $("cards");
+    const cards = [...box.children];
+    cards.forEach((c) => { c.hidden = false; });
+    $("noc-page").hidden = true;
+    if (!nocOn() || view !== "cards" || !cards.length) return;
+    const gap = parseFloat(getComputedStyle(box).rowGap) || 10;
+    const first = cards[0];
+    const cols = Math.max(1, Math.round((box.clientWidth + gap) / (first.offsetWidth + gap)));
+    const rows = Math.max(1, Math.floor((box.clientHeight + gap) / (first.offsetHeight + gap)));
+    const per = cols * rows;
+    const pages = Math.ceil(cards.length / per);
+    if (nocPage >= pages) nocPage = 0;
+    cards.forEach((c, i) => { c.hidden = Math.floor(i / per) !== nocPage; });
+    if (pages > 1) {
+      $("noc-page").hidden = false;
+      $("noc-page").textContent = `Página ${nocPage + 1} de ${pages} · ${per} por página, troca a cada ${NOC_PAGE_SECONDS} s`;
+    }
+  }
+
+  function setNoc(on) {
+    document.body.classList.toggle("noc", on);
+    $("btn-noc").textContent = on ? "✕ Sair da tela cheia" : "⤢ Tela cheia (NOC)";
+    clearInterval(nocTimer);
+    nocPage = 0;
+    if (on) {
+      if (view !== "cards") setView("cards", false);
+      nocTimer = setInterval(() => { nocPage += 1; nocLayout(); }, NOC_PAGE_SECONDS * 1000);
+    }
+    render();
+  }
+
+  $("btn-noc").addEventListener("click", async () => {
+    if (nocOn()) {
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      setNoc(false);
+      return;
+    }
+    // Sem a API de tela cheia (ou recusada), o layout NOC vale assim mesmo; F11 completa
+    if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen().catch(() => {});
+    setNoc(true);
+  });
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && nocOn()) setNoc(false); });
+  window.addEventListener("resize", () => { if (nocOn()) nocLayout(); });
 
   async function load() {
     const q = new URLSearchParams({ asset_type: "vm", limit: "5000" });
