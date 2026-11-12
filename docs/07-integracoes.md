@@ -9,7 +9,7 @@ inventário (`assets`, `interfaces`) e para as hypertables do TimescaleDB (`metr
 | SNMP v2c/v3 | cliente SNMP próprio (base do OpenFlow) | UDP 161 | 60 s |
 | VMware vCenter | API do vCenter em lote (PropertyCollector + PerfManager) | 443 | 60 s |
 | Hyper-V | WinRM, uma sessão por host devolvendo JSON de todas as VMs | 5986 | 60 s |
-| Veeam B&R 12+ | API REST (jobs, sessões, repositórios) | 9419 | 300 s |
+| Veeam B&R 12+ | API REST do VBR ou do Enterprise Manager (jobs, sessões, repositórios) | 9419 / 9398 | 300 s |
 
 ## Telas
 
@@ -120,8 +120,18 @@ heartbeat, tráfego de rede pelos contadores "Hyper-V Virtual Network Adapter").
 
 ## Veeam Backup & Replication
 
-API REST do VBR 12 ou mais novo (porta 9419). Conta `DOMINIO\usuario` com o papel **Backup Viewer** no Veeam.
-A versão da API vai em Avançado: 12.0 = `1.1-rev0`, 12.1 ou mais novo = `1.1-rev1` (padrão), 13 = `1.2-rev0`.
+Duas APIs, escolhidas em "API do Veeam" (padrão **Automático**, pela porta):
+
+- **API REST do Backup & Replication** (porta 9419, VBR 12 ou mais novo), apontando para o servidor do VBR.
+  Conta `DOMINIO\usuario` com o papel **Backup Viewer** no Veeam. A versão da API vai em Avançado: 12.0 =
+  `1.1-rev0`, 12.1 ou mais novo = `1.1-rev1` (padrão), 13 = `1.2-rev0`.
+- **API REST do Enterprise Manager** (porta 9398), apontando para o Enterprise Manager. Cobre todos os servidores
+  de backup ligados a ele. Conta com o papel **Portal Administrator** no Enterprise Manager. O EM não informa o
+  estado do job: o último resultado sai da sessão mais recente dele (um job sem execução na janela mantém o
+  último resultado conhecido).
+
+No modo automático a 9398 vai direto ao Enterprise Manager e as outras portas à API do VBR; se o login responder
+404, a outra API é tentada na mesma porta.
 
 A cada coleta: estado de todos os jobs, sessões criadas desde a última coleta (com 1 dia de folga, para pegar
 backups longos) e as que ainda estavam rodando, e os repositórios com capacidade e espaço livre. Jobs que somem

@@ -79,7 +79,10 @@ def _options(form: IntegrationForm) -> dict[str, Any]:
                 raise HTTPException(422, f"Host Hyper-V inválido: {h}")
         return {"transport": transport, "hosts": hosts[:64], "https": o.get("https", True) is not False}
     if form.kind == "veeam":
-        return {"api_version": str(o.get("api_version") or "1.1-rev1")[:20]}
+        api = str(o.get("api") or "auto")
+        if api not in ("auto", "vbr", "em"):
+            raise HTTPException(422, "API do Veeam inválida (auto, vbr ou em).")
+        return {"api": api, "api_version": str(o.get("api_version") or "1.1-rev1")[:20]}
     if form.kind == "vmware_vcd":
         version = str(o.get("api_version") or "38.0").strip()
         if not re.match(r"^\d{2}\.\d$", version):
