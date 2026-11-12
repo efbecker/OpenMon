@@ -552,3 +552,7 @@ progress.meter-bar.crit::-moz-progress-bar { background: var(--danger); }
 .os-linux { color: #fbbf24; border-color: rgba(251, 191, 36, 0.45); }
 .os-outro, .os-none { color: var(--muted); border-color: var(--border); }
 .vm-os + .vm-sub { margin-top: 3px; }
+
+/* Backups: vincular job/repositório a um tenant (admin) */
+.tenant-pick { max-width: 11rem; width: 100%; padding: 4px 6px; font-size: 0.85rem; }
+.tenant-pick + .btn { margin-top: 4px; }

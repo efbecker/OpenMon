@@ -137,6 +137,12 @@ vêm as **quotas de backup das organizações do vCloud Director** (`/api/vCloud
 vira um repositório de backup com quota, uso e livre, no tenant da regra de "Pasta / organização". Quando nada é
 encontrado, o "Testar conexão" e a coleta mostram o formato que o Veeam devolveu, para diagnóstico.
 
+**Tenant dos backups**: a regra que casar decide (jobs pelo campo "Job do Veeam", quotas do vCloud por "Pasta /
+organização"). Sem regra, um job, repositório ou quota cujo nome começa com o nome de uma organização do vCloud já
+vinculada a um cliente (pelos VDCs coletados), seguido de `_`, `-`, `/`, espaço ou ponto, vai para esse cliente:
+`POLLUX_S3OBR-VEEAM` segue a org `POLLUX`. Na tela Backups, o administrador vincula qualquer job ou repositório a
+um tenant ("Vincular"), e ele fica fixado.
+
 No modo automático a 9398 vai direto ao Enterprise Manager e as outras portas à API do VBR; se o login responder
 404, a outra API é tentada na mesma porta.
 

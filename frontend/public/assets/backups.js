@@ -42,6 +42,34 @@
     return el("span", { cls: "tag " + (j.in_sla ? "tag-ok" : "tag-bad"), text: (j.in_sla ? "em dia" : "fora do SLA") + ` · ${j.sla_hours} h` });
   }
 
+  // Admin: vincula o job ou o repositório a um tenant (fixado: a coleta e as regras não mudam mais)
+  function tenantCell(item, path) {
+    const td = el("td");
+    if (!data.can_manage || !(data.tenant_choices || []).length) {
+      td.append(item.tenant_name || "—");
+      return td;
+    }
+    const sel = el("select", { cls: "tenant-pick", attrs: { "aria-label": `Tenant de ${item.name}` } },
+      ...data.tenant_choices.map((t) => el("option", { text: t.name, attrs: { value: String(t.id) } })));
+    sel.value = String(item.tenant_id);
+    const save = button("Vincular", "primary", async () => {
+      save.disabled = true;
+      try {
+        await api("PUT", path, { tenant_id: Number(sel.value), tenant_locked: true, is_monitored: true });
+        showError("list-error", "");
+        await load();
+      } catch (e) {
+        showError("list-error", e.message);
+        save.disabled = false;
+      }
+    });
+    save.hidden = true;
+    sel.addEventListener("change", () => { save.hidden = sel.value === String(item.tenant_id); });
+    td.append(sel, save);
+    if (item.tenant_locked) td.append(el("div", { cls: "muted small", text: "fixo" }));
+    return td;
+  }
+
   function renderSummary() {
     $("summary").replaceChildren(...data.tenants.map((t) => {
       const withSla = t.in_sla + t.out_of_sla;
@@ -74,7 +102,7 @@
       const good = el("td", { cls: "small" }, j.last_success_at ? when(j.last_success_at) : "nunca");
       if (j.last_success_at) good.append(el("div", { cls: "muted", text: ago(j.last_success_at) }));
       return el("tr", { cls: !j.is_enabled ? "row-off" : j.in_sla === false || j.last_result === "failed" ? "row-warn" : "" },
-        name, el("td", { text: j.tenant_name }), el("td", { text: j.job_type || "—" }), last,
+        name, tenantCell(j, `/api/backups/${j.id}/tenant`), el("td", { text: j.job_type || "—" }), last,
         el("td", null, tag(j.last_result)), good, el("td", null, slaTag(j)), el("td", { cls: "small", text: j.repository_name || "—" }),
         el("td", null, button("Histórico", "ghost", () => openRuns(j))));
     }));
@@ -87,7 +115,7 @@
     $("repos").tBodies[0].replaceChildren(...repos.map((r) => {
       const use = r.capacity_bytes ? Math.round(100 * (1 - (r.free_bytes || 0) / r.capacity_bytes)) : null;
       return el("tr", { cls: use !== null && use >= 90 ? "row-warn" : "" }, el("td", null, el("strong", { text: r.name })),
-        el("td", { text: r.hostname || "—" }), el("td", { text: r.model || "—" }), el("td", { cls: "mono small", text: r.path || "—" }),
+        tenantCell(r, `/api/admin/assets/${r.id}`), el("td", { text: r.hostname || "—" }), el("td", { text: r.model || "—" }), el("td", { cls: "mono small", text: r.path || "—" }),
         el("td", { text: bytes(r.capacity_bytes) }), el("td", { text: bytes(r.free_bytes) }),
         el("td", { cls: use !== null && use >= 90 ? "bad" : "", text: use === null ? "—" : `${use}%` }),
         el("td", null, el("span", { cls: "tag " + (r.status === "up" ? "tag-ok" : "tag-bad"), text: r.status === "up" ? "online" : "offline" })));
