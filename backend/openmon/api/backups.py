@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
-from openmon.api.admin_tenants import _db_error, _iso
+from openmon.api.admin_tenants import _audit, _db_error, _iso
 from openmon.api.auth import SessionInfo, require_permission
 from openmon.db import pool
 
@@ -37,12 +38,17 @@ async def list_backups(tenant_id: int | None = None, include_deleted: bool = Fal
                     ORDER BY lower(t.name), lower(j.name)""", tenant_id, include_deleted)
             repos = await conn.fetch(
                 """SELECT a.id, a.name, a.status, a.hostname, a.model, a.attributes->>'path' AS path,
+                          a.tenant_id, t.name AS tenant_name, a.tenant_locked,
                           (a.attributes->>'capacity_bytes')::bigint AS capacity_bytes,
                           (a.attributes->>'free_bytes')::bigint AS free_bytes, i.name AS integration_name
                      FROM assets a LEFT JOIN integrations i ON i.id = a.integration_id
+                     JOIN tenants t ON t.id = a.tenant_id
                     WHERE a.asset_type = 'backup_repository' AND a.deleted_at IS NULL
                       AND ($1::bigint IS NULL OR a.tenant_id = $1)
                     ORDER BY lower(a.name)""", tenant_id)
+            # Admin vincula job/repositório a qualquer tenant ativo (não só aos que já têm backup)
+            choices = await conn.fetch("SELECT id, name FROM tenants WHERE is_active ORDER BY lower(name)") \
+                if session.can("integrations.manage") else []
     except pool.DatabaseUnavailable as exc:
         raise _db_error(exc) from exc
     out = [{k: _iso(r[k]) for k in r.keys()} for r in jobs]
@@ -61,7 +67,41 @@ async def list_backups(tenant_id: int | None = None, include_deleted: bool = Fal
         if j["sla_hours"] and (t["sla_hours"] is None or j["sla_hours"] < t["sla_hours"]):
             t["sla_hours"] = j["sla_hours"]
     return {"jobs": out, "tenants": sorted(tenants.values(), key=lambda t: t["tenant_name"].lower()),
-            "repositories": [dict(r) for r in repos], "can_manage": session.can("integrations.manage")}
+            "repositories": [dict(r) for r in repos], "can_manage": session.can("integrations.manage"),
+            "tenant_choices": [dict(r) for r in choices]}
+
+
+class JobTenant(BaseModel):
+    tenant_id: int
+    tenant_locked: bool = True
+
+
+@router.put("/{job_id}/tenant")
+async def set_job_tenant(job_id: int, form: JobTenant, request: Request,
+                         session: SessionInfo = Depends(require_permission("integrations.manage", write=True))
+                         ) -> dict[str, Any]:
+    """Vincula o job (e o histórico dele) a um tenant; fixado, a coleta e as regras não mudam mais."""
+    try:
+        async with session.db() as conn:
+            job = await conn.fetchrow("SELECT tenant_id, name, integration_id, external_id FROM backup_jobs "
+                                      "WHERE id = $1 FOR UPDATE", job_id)
+            if job is None:
+                raise HTTPException(404, "Job não encontrado.")
+            if not await conn.fetchval("SELECT 1 FROM tenants WHERE id = $1", form.tenant_id):
+                raise HTTPException(422, "Tenant inexistente.")
+            await conn.execute("UPDATE backup_jobs SET tenant_id = $2, tenant_locked = $3, updated_at = now() "
+                               "WHERE id = $1", job_id, form.tenant_id, form.tenant_locked)
+            await conn.execute("UPDATE backup_job_runs SET tenant_id = $2 WHERE job_id = $1 AND tenant_id <> $2",
+                               job_id, form.tenant_id)
+            # O ativo "job:" (alertas por job) acompanha
+            await conn.execute("UPDATE assets SET tenant_id = $3, tenant_locked = $4, updated_at = now() "
+                               "WHERE integration_id = $1 AND external_id = $2", job["integration_id"],
+                               f"job:{job['external_id']}", form.tenant_id, form.tenant_locked)
+            await _audit(conn, session, request, "backup_job.tenant", "backup_job", job_id, form.tenant_id,
+                         {"name": job["name"], "from_tenant": job["tenant_id"], **form.model_dump()})
+    except pool.DatabaseUnavailable as exc:
+        raise _db_error(exc) from exc
+    return {"ok": True}
 
 
 @router.get("/{job_id}/runs")

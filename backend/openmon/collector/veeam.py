@@ -565,6 +565,28 @@ async def test(integ: Integration) -> dict[str, Any]:
                         **({"diagnostic": " | ".join(api.diag)[:1500]} if api.diag and not njobs else {})}}
 
 
+def org_of(name: str, orgs: dict[str, int]) -> int | None:
+    """Tenant da organização do vCloud cujo nome abre ``name`` (``POLLUX_S3OBR-VEEAM`` -> org ``POLLUX``)."""
+    n = (name or "").strip().lower()
+    for org in sorted(orgs, key=len, reverse=True):
+        if len(org) >= 3 and (n == org or (n.startswith(org) and n[len(org)] in "_-/ .:")):
+            return orgs[org]
+    return None
+
+
+async def _org_tenants(conn: Any, default: int) -> dict[str, int]:
+    """Organizações do vCloud já vinculadas a um cliente (pelos VDCs coletados): org -> tenant mais comum."""
+    rows = await conn.fetch(
+        """SELECT lower(attributes->>'org') AS org, tenant_id, count(*) AS n FROM assets
+            WHERE asset_type = 'datacenter' AND deleted_at IS NULL AND attributes->>'org' IS NOT NULL
+              AND tenant_id <> $1
+            GROUP BY 1, 2 ORDER BY 3 DESC""", default)
+    out: dict[str, int] = {}
+    for r in rows:
+        out.setdefault(r["org"], int(r["tenant_id"]))
+    return out
+
+
 def _session_result(s: dict[str, Any]) -> str:
     state = str(s.get("state") or "").lower()
     res = s.get("result") or {}
@@ -610,9 +632,20 @@ async def poll(integ: Integration, w: Writer) -> str:
     sid, stid = server["veeam-server"]
     w.metric(sid, stid, "availability.up", 1)
 
+    # Sem regra que case, o nome que começa com uma organização do vCloud vai para o cliente dela
+    orgs_t = await _org_tenants(conn, integ.tenant_id)
+
+    async def tenant_of(facts: dict[str, Any], name: str) -> int:
+        tid = await w.tenant_for(facts)
+        if tid == integ.tenant_id:
+            tid = org_of(name, orgs_t) or tid
+        return tid
+
+    repo_tenant = {r["id"]: await tenant_of({"name": r.get("name") or ""}, r.get("name") or "")
+                   for r in repos if r.get("id")}
     repo_ids = await w.assets_bulk([
         {"external_id": f"repo:{r['id']}", "asset_type": "backup_repository", "name": r.get("name") or r["id"],
-         "parent_id": sid, "status": "down" if r.get("isOnline") is False else "up",
+         "tenant_id": repo_tenant[r["id"]], "parent_id": sid, "status": "down" if r.get("isOnline") is False else "up",
          "hostname": r.get("hostName"), "model": r.get("type"),
          "attributes": {"path": r.get("path"), "type": r.get("type"),
                         "capacity_bytes": int((r.get("capacityGB") or 0) * GB),
@@ -637,7 +670,7 @@ async def poll(integ: Integration, w: Writer) -> str:
     # no tenant da regra de "pasta / organização"
     org_items = []
     for o in orgs:
-        tid = await w.tenant_for({"folder": [o["org"]], "name": o["org"]})
+        tid = await tenant_of({"folder": [o["org"]], "name": o["org"]}, o["org"])
         org_items.append({"external_id": f"vcdorg:{o['id']}", "asset_type": "backup_repository",
                           "name": f"{o['org']} / {o['repo']}", "tenant_id": tid, "parent_id": sid,
                           "status": "up" if o["enabled"] else "maintenance", "vendor": "Veeam",
@@ -662,7 +695,7 @@ async def poll(integ: Integration, w: Writer) -> str:
             continue
         status = str(j.get("status") or "").lower()
         result = "running" if status == "running" else RESULT.get(str(j.get("lastResult") or "none").lower(), "none")
-        tenant = await w.tenant_for({"veeam_job": j.get("name"), "name": j.get("name") or ""})
+        tenant = await tenant_of({"veeam_job": j.get("name"), "name": j.get("name") or ""}, j.get("name") or "")
         repo = repo_ids.get(f"repo:{j.get('repositoryId')}")
         row = await conn.fetchrow(
             """INSERT INTO backup_jobs (tenant_id, integration_id, external_id, name, job_type, is_enabled,

@@ -217,3 +217,13 @@ def test_enterprise_manager_empty_shows_diagnostic(monkeypatch):
     monkeypatch.setattr(veeam, "_transport", httpx.MockTransport(f.handler))
     out = asyncio.run(veeam.test(integ()))
     assert "0 job(s)" in out["summary"] and "query Job" in out["details"]["diagnostic"], out
+
+
+def test_org_of_matches_vcloud_org_prefix():
+    orgs = {"pollux": 7, "acme": 3, "acme-sp": 4, "ab": 9}
+    assert veeam.org_of("POLLUX_S3OBR-VEEAM", orgs) == 7
+    assert veeam.org_of("POLLUX", orgs) == 7
+    assert veeam.org_of("ACME-SP Backup diário", orgs) == 4  # o nome mais longo vence
+    assert veeam.org_of("ACME / Repo", orgs) == 3
+    assert veeam.org_of("POLLUXO-REPO", orgs) is None  # só com separador depois do nome
+    assert veeam.org_of("AB_REPO", orgs) is None  # nomes curtos demais não contam
