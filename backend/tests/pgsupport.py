@@ -74,6 +74,10 @@ def reset_data() -> None:
         c.execute("DELETE FROM vault_keys")
         c.execute("DELETE FROM users")
         c.execute("DELETE FROM tenants WHERE NOT is_provider")
+        # O TRUNCATE de assets leva junto os alertas (FK); recria os de fábrica como no deploy
+        for mig in migrations.discover():
+            if mig.version.endswith("_vm_disk_triggers"):
+                c.execute(mig.sql)
 
 
 def sql(query: str, *params):

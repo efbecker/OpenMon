@@ -19,7 +19,7 @@
     $("btn-save").disabled = true;
     try {
       const out = await api("POST", "/api/auth/password", { current_password: current, new_password: next });
-      location.replace(out.redirect || "/home.html");
+      location.replace(out.redirect || "/painel.html");
     } catch (e) {
       showError("form-error", e.message);
       $("btn-save").disabled = false;

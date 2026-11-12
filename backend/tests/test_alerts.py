@@ -139,7 +139,7 @@ def test_metric_trigger_hysteresis_channels_and_tenant_isolation(client, outbox)
     assert tgm["chat_id"] == "-1001234567890" and "acme-db01" in tgm["text"] and "parse_mode" not in tgm
 
     # Segunda rodada: nada novo (um problema aberto por trigger + ativo)
-    assert tick(client)["eval"] == {"triggers": 1, "opened": 0, "resolved": 0}
+    assert tick(client)["eval"] == {"triggers": 3, "opened": 0, "resolved": 0}  # + os 2 de disco das VMs
     # Cai para 85: acima da recuperação (80), continua aberto; 70: resolve e avisa
     sql("DELETE FROM metric_samples")
     metric(vm_a, acme["id"], 1, 85)
@@ -204,7 +204,7 @@ def test_availability_backup_integration_and_storage(client, outbox):
         "WHERE external_id = 'job:j1'", iid, job)
 
     r = client.post("/api/alerts/triggers/recommended", headers=h(csrf))
-    assert len(r.json()["created"]) == 8
+    assert len(r.json()["created"]) == 7  # os dois de disco das VMs já vêm da migration 0007
     assert client.post("/api/alerts/triggers/recommended", headers=h(csrf)).json()["created"] == []
     tick(client)
     msgs = {r[0]: r[1] for r in sql("SELECT a.name, p.message FROM alert_problems p "
@@ -276,3 +276,24 @@ def test_retries_email_and_channel_test(client, outbox):
     assert sql("SELECT status, attempts FROM notification_deliveries WHERE channel_id = %s", hook)[0] == \
         ("failed", 5)
     assert vm
+
+
+def test_vm_disk_alerts_are_on_by_default(client, outbox):
+    """O mesmo limite que pinta a VM de crítico na tela VMs abre o problema, sem configurar nada."""
+    csrf, _ = login(client)
+    acme = new_tenant(client, csrf)
+    cheia = mk_asset(acme["id"], "acme-db41")
+    quase = mk_asset(acme["id"], "acme-ap62")
+    folga = mk_asset(acme["id"], "acme-ap10")
+    for aid, v in ((cheia, 99.2), (quase, 91.0), (folga, 40.0)):
+        metric(aid, acme["id"], 62, v)
+    tick(client)
+    got = sorted((r[0], r[1]) for r in sql("SELECT a.name, p.severity FROM alert_problems p JOIN assets a "
+                                           "ON a.id = p.asset_id WHERE p.status = 'problem'"))
+    assert got == [("acme-ap62", "average"), ("acme-db41", "average"), ("acme-db41", "high")], got
+
+    new_user(client, csrf, "cli-acme", tenant_ids=[acme["id"]], must_change_password=False)
+    login(client, "cli-acme", TEMP_PW)
+    probs = client.get("/api/alerts/problems?status=open").json()
+    rows = probs["problems"] if isinstance(probs, dict) else probs
+    assert {p["asset_id"] for p in rows} == {cheia, quase}

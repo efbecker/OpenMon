@@ -137,7 +137,12 @@ pasta, MoRef, provider VDC, nome do vCenter, `external_id` e a integração de o
 * Visualização em tabela com ordenação por coluna, filtro por situação (inclusive "em atenção") e busca.
 * O detalhe da VM mostra os volumes do sistema e os gráficos.
 * Cada card mostra o tipo de sistema (Windows, Linux, outro) e o nome curto; há filtro por sistema.
-* Para o cliente, a tela VMs substitui o Inventário (o menu Inventário só aparece para o provedor) e o Painel
+* Alertas de disco ligados de fábrica (migration 0007, para todos os tenants): volume mais cheio ≥ 90 %
+  (média) e ≥ 97 % (alta), os mesmos limites que pintam a VM de atenção e crítico. Assim o status da VM e os
+  Problemas ativos vêm da mesma regra. Sem VMware Tools só há o disco no datastore (usado/provisionado, com
+  snapshots, pode passar de 100 %): ele aparece como DATASTORE no card, sem cor e fora da saúde e dos alertas.
+* O Início saiu do menu: todos entram no Painel.
+* Para o cliente, a tela VMs substitui o Inventário e os Alertas (o menu Inventário só aparece para o provedor) e o Painel
   mostra só o contratado x em uso e o consumo no período.
 * **Gráficos**: períodos de 1 hora a 1 ano ou datas escolhidas; CPU e memória (média e pico), disco
   usado x provisionado, volume mais cheio, espaço nos volumes, leitura/escrita em disco, IOPS, rede recebida/enviada, CPU Ready. O endereço
