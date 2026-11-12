@@ -50,11 +50,18 @@
           <select id="kind">
             <option value="growth">Crescimento de recursos</option>
             <option value="consumption">Consumo x contratado</option>
+            <option value="finops">FinOps: dimensionamento das VMs</option>
           </select></label>
         <label class="field"><span class="label">De</span><input id="start" type="date"></label>
         <label class="field"><span class="label">Até</span><input id="end" type="date"></label>
         <button type="submit" class="btn primary" id="go">Gerar</button>
       </form>
+      <div class="rep-form prices mt" id="prices" hidden>
+        <label class="field"><span class="label">R$ por vCPU / mês</span><input id="p-vcpu" type="number" min="0" step="0.01" placeholder="opcional"></label>
+        <label class="field"><span class="label">R$ por GB de RAM / mês</span><input id="p-mem" type="number" min="0" step="0.01" placeholder="opcional"></label>
+        <label class="field"><span class="label">R$ por GB de disco / mês</span><input id="p-disk" type="number" min="0" step="0.01" placeholder="opcional"></label>
+        <p class="muted small">Com os preços, o relatório mostra a economia mensal estimada em reais. Ficam salvos neste navegador.</p>
+      </div>
       <div class="head-actions left mt" id="presets">
         <span class="muted small">Atalhos:</span>
         <button type="button" class="btn ghost small-btn" data-preset="month">Mês passado</button>
@@ -151,6 +158,17 @@
         <div class="table-wrap"><table class="table" id="removed">
           <thead><tr><th>Removida em</th><th>Máquina virtual</th><th>Sistema operacional</th><th>vCPU</th><th>Memória</th>
             <th>Disco</th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section class="rep-sec" id="f-sum" hidden>
+        <div class="ai-box" id="f-text"></div>
+        <div class="table-wrap"><table class="table" id="f-table">
+          <thead><tr><th></th><th>Máquina virtual</th><th>Sistema operacional</th><th>Médias no período</th><th>Recomendação</th></tr></thead>
+          <tbody></tbody></table></div>
+      </section>
+      <section class="rep-sec" id="f-vms" hidden>
+        <h2>Análise de capacidade por VM</h2>
+        <p class="muted small" id="f-sub"></p>
+        <div id="f-cards"></div>
       </section>
       <p class="muted small rep-foot" id="r-foot"></p>
     </article>

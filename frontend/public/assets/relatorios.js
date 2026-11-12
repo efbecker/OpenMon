@@ -67,7 +67,7 @@
 
   function renderGrowth(g, o) {
     show(["g-evo", "g-years", "g-vms"], true);
-    show(["c-usage", "c-top"], false);
+    show(["c-usage", "c-top", "f-sum", "f-vms"], false);
     $("r-kind").textContent = "Relatório de crescimento de recursos";
     const since = g.kpis_since || (g.labels.length ? g.labels[0] : "");
     const k = g.kpis;
@@ -100,7 +100,7 @@
   }
 
   function renderConsumption(c, o) {
-    show(["g-evo", "g-years", "g-vms", "g-removed"], false);
+    show(["g-evo", "g-years", "g-vms", "g-removed", "f-sum", "f-vms"], false);
     show(["c-usage"], true);
     $("r-kind").textContent = "Relatório de consumo x contratado";
     const k = o.contract;
@@ -165,7 +165,9 @@
       const endDay = new Date(new Date(data.end).getTime() - 1);
       meta([["Período", `${day(data.start)} a ${endDay.toLocaleDateString("pt-BR")}`],
         ["Ambiente", o.vdcs.map((d) => d.vdc).join(", ") || "—"], ["Emitido em", new Date().toLocaleDateString("pt-BR")]]);
-      if (kind === "growth") renderGrowth(data, o); else renderConsumption(data, o);
+      if (kind === "growth") renderGrowth(data, o);
+      else if (kind === "finops") renderFinops(data, o);
+      else renderConsumption(data, o);
       $("print").disabled = false;
       $("html").disabled = false;
       $("csv").disabled = false;
@@ -180,10 +182,134 @@
     }
   }
 
+  const KIND_FILE = { growth: "crescimento", consumption: "consumo", finops: "finops" };
+  const STATUS = { ok: ["Adequada", "ok"], warn: ["Pode economizar", "warn"], crit: ["Precisa de mais recursos", "crit"],
+    nodata: ["Sem métricas", "nodata"] };
+  const PRICE = "openmon.finops.prices";
+
+  function prices() {
+    const n = (id) => { const v = parseFloat(String($(id).value).replace(",", ".")); return isFinite(v) && v > 0 ? v : 0; };
+    return { vcpu: n("p-vcpu"), mem: n("p-mem"), disk: n("p-disk") };
+  }
+
+  function money(v) { return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
+  function ghz(mhz) { return mhz === null || mhz === undefined ? "—" : `${C.num(mhz / 1000, 1)} GHz`; }
+  function rate(b) {
+    if (b === null || b === undefined) return "—";
+    return b >= 1e6 ? `${C.num(b / 1e6, 1)} Mbps` : `${C.num(b / 1e3, 0)} kbps`;
+  }
+  function uptime(sec) {
+    if (!sec) return "—";
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    return d ? `${d} dia(s)${h ? `, ${h}h` : ""}` : `${h}h`;
+  }
+  function osIcon(os) {
+    const t = (os || "").toLowerCase();
+    return t.includes("windows") ? "🪟 " : /linux|ubuntu|debian|centos|alma|rocky|red hat|suse|oracle/.test(t) ? "🐧 " : "💻 ";
+  }
+
+  function renderFinops(f, o) {
+    show(["g-evo", "g-years", "g-vms", "g-removed", "c-usage", "c-top"], false);
+    show(["f-sum", "f-vms"], true);
+    $("env").hidden = true;
+    $("r-kind").textContent = "Relatório FinOps · dimensionamento das VMs";
+    const t = f.totals;
+    const pr = prices();
+    const savingR = t.saving.vcpu * pr.vcpu + t.saving.memory_gb * pr.mem + t.saving.disk_gb * pr.disk;
+    const extraR = t.extra.vcpu * pr.vcpu + t.extra.memory_gb * pr.mem;
+    const analysed = f.vms.length - t.status.nodata;
+    const kpis = [
+      el("div", { cls: "rep-kpi" }, el("div", { cls: "k", text: "VMs analisadas" }), el("div", { cls: "big", text: `${analysed}` }),
+        el("div", { cls: "muted small", text: `${t.status.ok} adequadas · ${t.status.warn} com sobra · ${t.status.crit} sob pressão` })),
+      el("div", { cls: "rep-kpi" }, el("div", { cls: "k", text: "vCPU liberáveis" }), el("div", { cls: "big", text: C.num(t.saving.vcpu, 0) }),
+        el("div", { cls: "muted small", text: `de ${C.num(t.allocated.vcpu, 0)} alocadas` })),
+      el("div", { cls: "rep-kpi" }, el("div", { cls: "k", text: "Memória liberável" }), el("div", { cls: "big", text: `${C.num(t.saving.memory_gb, 0)} GB` }),
+        el("div", { cls: "muted small", text: `de ${C.num(t.allocated.memory_gb, 0)} GB alocados` })),
+      el("div", { cls: "rep-kpi" }, el("div", { cls: "k", text: savingR ? "Economia estimada" : "Disco liberável" }),
+        el("div", { cls: "big", text: savingR ? money(savingR) : `${C.num(t.saving.disk_gb, 0)} GB` }),
+        el("div", { cls: "muted small", text: savingR ? "por mês, com os preços informados" : "provisionado sem uso" }))];
+    $("r-kpis").replaceChildren(...kpis);
+
+    const parts = [];
+    parts.push(`Foram analisadas ${analysed} VM(s) com métricas no período`
+      + (t.status.nodata ? ` (${t.status.nodata} sem leituras de uso ficaram de fora)` : "") + ". ");
+    if (t.status.warn) parts.push(`${t.status.warn} têm recursos sobrando: dá para liberar ${C.num(t.saving.vcpu, 0)} vCPU, `
+      + `${C.num(t.saving.memory_gb, 0)} GB de memória e ${C.num(t.saving.disk_gb, 0)} GB de disco`
+      + (savingR ? `, cerca de ${money(savingR)} por mês. ` : ". "));
+    if (t.status.crit) parts.push(`${t.status.crit} estão sob pressão e precisam de mais ${C.num(t.extra.vcpu, 0)} vCPU e `
+      + `${C.num(t.extra.memory_gb, 0)} GB de memória` + (extraR ? ` (cerca de ${money(extraR)} por mês)` : "") + ". ");
+    if (!t.status.warn && !t.status.crit && analysed) parts.push("Todas estão bem dimensionadas para o uso medido. ");
+    parts.push(`Critério: P95 do uso abaixo de ${f.thresholds.cpu_low}% (CPU) ou ${f.thresholds.mem_low}% (memória) indica sobra; `
+      + `acima de ${f.thresholds.cpu_high}% / ${f.thresholds.mem_high}% indica pressão. As recomendações miram ${f.thresholds.target}% de uso.`);
+    $("f-text").replaceChildren(el("strong", { text: "Resumo: " }), el("span", { text: parts.join("") }));
+
+    const avgLine = (v) => {
+      const a = v.avg;
+      const bits = [];
+      if (a.cpu_pct !== null) bits.push(`CPU ${C.pct(a.cpu_pct)}${a.cpu_mhz ? ` (${ghz(a.cpu_mhz)})` : ""}`);
+      if (a.mem_pct !== null) bits.push(`RAM ${C.pct(a.mem_pct)}${v.memory_bytes ? ` (${C.num(a.mem_pct * v.memory_bytes / 100 / GBn, 1)} GB)` : ""}`);
+      if (v.volumes && v.volumes.length) bits.push(`Disco ${v.volumes.map((x) => C.pct(x.pct)).join(" | ")}`);
+      else if (a.disk_used_bytes && a.disk_capacity_bytes) bits.push(`Disco ${C.pct(a.disk_used_bytes / a.disk_capacity_bytes * 100)}`);
+      if (a.net_rx_bps !== null || a.net_tx_bps !== null) bits.push(`Rede ↓${rate(a.net_rx_bps)} ↑${rate(a.net_tx_bps)}`);
+      return bits.join(" · ") || "—";
+    };
+    $("f-table").tBodies[0].replaceChildren(...f.vms.map((v) => {
+      const main = v.recs[0];
+      const link = el("a", { text: v.name, attrs: { href: `#vm-${v.id}` } });
+      return el("tr", null,
+        el("td", null, el("span", { cls: `dot ${v.status}`, title: STATUS[v.status][0] })),
+        el("td", null, el("strong", null, link)),
+        el("td", { cls: "small", text: osIcon(v.os) + (v.os || "não informado") }),
+        el("td", { cls: "mono small", text: avgLine(v) }),
+        el("td", { cls: "rec-short" }, el("span", { cls: main.level, text: v.recs.map((r) => r.title).join(" · ") })));
+    }));
+
+    const labels = f.labels.map((x) => C.timeLabel(x, f.step_seconds));
+    const tier = { samples: "leituras de cada coleta", hourly: "médias por hora", daily: "médias por dia" }[f.tier] || "";
+    $("f-sub").textContent = `Alocado, médias de consumo e recomendação de cada VM, com o uso de CPU e memória no período (${tier}).`;
+    const cards = [];
+    const charts = [];
+    f.vms.forEach((v) => {
+      const a = v.avg;
+      const cap = a.cpu_capacity_mhz;
+      const h = el("h3", null, el("span", { cls: `dot ${v.status}` }), el("span", { text: v.name }),
+        el("span", { cls: "tag tag-tenant", text: osIcon(v.os) + (v.os || "SO não informado") }),
+        cap ? el("span", { cls: "tag tag-you", text: `⚡ ${ghz(cap)}` }) : null);
+      const alloc = el("div", { cls: "vm-box" }, el("div", { cls: "k", text: "Alocado" }),
+        el("div", null, "vCPU: ", el("b", { text: v.vcpu ? C.num(v.vcpu, 0) : "—" })),
+        cap ? el("div", null, "Capacidade: ", el("b", { text: ghz(cap) })) : null,
+        el("div", null, "Memória: ", el("b", { text: v.memory_bytes ? `${C.num(v.memory_bytes / GBn, 0)} GB` : "—" })),
+        el("div", null, "Disco: ", el("b", { text: a.disk_capacity_bytes ? tb(a.disk_capacity_bytes) : "—" })));
+      const use = el("div", { cls: "vm-box" }, el("div", { cls: "k", text: "Médias de consumo" }),
+        el("div", null, "CPU: ", el("b", { text: a.cpu_pct === null ? "—" : `${C.pct(a.cpu_pct)}${a.cpu_mhz ? ` · ${ghz(a.cpu_mhz)}` : ""} (pico ${C.pct(a.cpu_peak)})` })),
+        el("div", null, "Memória: ", el("b", { text: a.mem_pct === null ? "—" : `${v.memory_bytes ? `${C.num(a.mem_pct * v.memory_bytes / 100 / GBn, 1)} GB · ` : ""}${C.pct(a.mem_pct)} (pico ${C.pct(a.mem_peak)})` })),
+        el("div", null, "Discos: ", el("b", { text: v.volumes && v.volumes.length ? v.volumes.map((x) => `${x.path || ""} ${C.pct(x.pct)}`.trim()).join(" | ")
+          : a.disk_used_bytes && a.disk_capacity_bytes ? `${tb(a.disk_used_bytes)} de ${tb(a.disk_capacity_bytes)}` : "—" })),
+        el("div", null, "Rede: ", el("b", { text: a.net_rx_bps === null && a.net_tx_bps === null ? "—" : `↓${rate(a.net_rx_bps)} ↑${rate(a.net_tx_bps)}` })),
+        a.uptime_s ? el("div", null, "Uptime: ", el("b", { text: uptime(a.uptime_s) })) : null);
+      const icon = { crit: "🚨 ", warn: "🔻 ", ok: "✅ ", info: "ℹ️ " };
+      const ana = el("div", { cls: "vm-box" }, el("div", { cls: "k", text: "Análise de capacidade e FinOps" }),
+        el("ul", { cls: "recs" }, ...v.recs.map((r) => el("li", { cls: r.level }, el("strong", { text: (icon[r.level] || "") + r.title + ": " }), el("span", { text: r.text })))));
+      const card = el("div", { cls: "vm-card", attrs: { id: `vm-${v.id}` } }, h, el("div", { cls: "vm-boxes" }, alloc, use, ana));
+      if (v.series) {
+        const cv = el("canvas", { attrs: { role: "img", "aria-label": `CPU e memória de ${v.name}` } });
+        card.append(el("div", { cls: "chart-box" }, cv));
+        charts.push([cv, v.series]);
+      }
+      cards.push(card);
+    });
+    $("f-cards").replaceChildren(...cards);
+    charts.forEach(([cv, sr]) => C.line(cv, labels, [{ label: "CPU", data: sr.cpu, kind: "used", fill: false },
+      { label: "Memória", data: sr.mem, kind: "second", fill: false }], { fmt: (x) => C.pct(x), suggestedMax: 100 }));
+    $("r-foot").textContent = "Sobra e pressão medidas pelo percentil 95 das médias do período (picos isolados não contam). "
+      + "Reduzir vCPU e memória exige reiniciar a VM; reduzir disco exige migrar os dados. Valide com o responsável pela aplicação antes de aplicar.";
+  }
+
   function fileName(ext) {
     const L = state.last;
     const t = L.data.tenant;
-    return `${L.kind === "growth" ? "crescimento" : "consumo"}-${t.slug || t.id}-${iso(new Date())}.${ext}`;
+    return `${KIND_FILE[L.kind] || L.kind}-${t.slug || t.id}-${iso(new Date())}.${ext}`;
   }
 
   function download(blob, name) {
@@ -260,7 +386,22 @@
     if (!L) return;
     const rows = [];
     const d = L.data;
-    if (L.kind === "growth") {
+    if (L.kind === "finops") {
+      rows.push(["Situação", "Máquina virtual", "Sistema operacional", "vCPU", "vCPU recomendadas", "Memória (GB)",
+        "Memória recomendada (GB)", "CPU média (%)", "CPU P95 (%)", "CPU pico (%)", "Memória média (%)", "Memória P95 (%)",
+        "Disco (GB)", "Disco usado (GB)", "vCPU liberáveis", "RAM liberável (GB)", "Disco liberável (GB)", "Recomendações"]);
+      d.vms.forEach((v) => {
+        const r = (k) => v.recs.find((x) => x.kind === k);
+        const cpu = r("cpu_down") || r("cpu_up");
+        const memR = r("mem_down") || r("mem_up");
+        const g = (b) => (b === null || b === undefined ? "" : (b / GBn).toFixed(0));
+        const f = (x) => (x === null || x === undefined ? "" : Number(x).toFixed(1));
+        rows.push([STATUS[v.status][0], v.name, v.os || "", v.vcpu || "", cpu ? cpu.to : "", g(v.memory_bytes), memR ? memR.to : "",
+          f(v.avg.cpu_pct), f(v.avg.cpu_p95), f(v.avg.cpu_peak), f(v.avg.mem_pct), f(v.avg.mem_p95),
+          g(v.avg.disk_capacity_bytes), g(v.avg.disk_used_bytes), v.saving.vcpu, f(v.saving.memory_gb), f(v.saving.disk_gb),
+          v.recs.map((x) => x.title).join(" | ")]);
+      });
+    } else if (L.kind === "growth") {
       rows.push(["Mês", "Máquinas virtuais", "vCPU", "Memória (GB)", "Disco (GB)"]);
       d.labels.forEach((m, i) => rows.push([m, d.series.vms[i], d.series.vcpu[i],
         (d.series.memory_bytes[i] / GBn).toFixed(0), (d.series.disk_bytes[i] / GBn).toFixed(0)]));
@@ -282,7 +423,7 @@
     }).join(";")).join("\r\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-    a.download = `${L.kind === "growth" ? "crescimento" : "consumo"}-${(d.tenant.slug || d.tenant.id)}-${iso(new Date())}.csv`;
+    a.download = fileName("csv");
     document.body.append(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
@@ -304,7 +445,18 @@
     sel.replaceChildren(...state.scope.tenants.map((t) => el("option", { text: t.name, attrs: { value: String(t.id) } })));
     const tid = state.scope.tenants.some((t) => t.id === want) ? want : state.scope.default_tenant_id;
     if (tid) sel.value = String(tid);
-    if (q.get("kind")) $("kind").value = q.get("kind") === "consumption" ? "consumption" : "growth";
+    if (q.get("kind")) $("kind").value = ["consumption", "finops"].includes(q.get("kind")) ? q.get("kind") : "growth";
+    try {
+      const saved = JSON.parse(localStorage.getItem(PRICE) || "{}");
+      $("p-vcpu").value = saved.vcpu || ""; $("p-mem").value = saved.mem || ""; $("p-disk").value = saved.disk || "";
+    } catch (_) { /* navegação privada */ }
+    ["p-vcpu", "p-mem", "p-disk"].forEach((id) => $(id).addEventListener("change", () => {
+      try { localStorage.setItem(PRICE, JSON.stringify(prices())); } catch (_) { /* sem armazenamento */ }
+      if (state.last && state.last.kind === "finops") renderFinops(state.last.data, state.last.overview);
+    }));
+    const kindUi = () => { $("prices").hidden = $("kind").value !== "finops"; };
+    kindUi();
+    $("kind").addEventListener("change", kindUi);
     if (q.get("start") || q.get("end")) { $("start").value = q.get("start") || ""; $("end").value = q.get("end") || ""; }
     else preset($("kind").value === "growth" ? "all" : "30");
     $("kind").addEventListener("change", () => preset($("kind").value === "growth" ? "all" : "30"));

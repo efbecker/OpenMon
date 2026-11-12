@@ -514,3 +514,199 @@ async def growth(tenant_id: int | None = None, start: str | None = Query(default
             "kpis": {k: change(k) for k in ("vms", "vcpu", "memory_bytes", "disk_bytes")}, "kpis_since": since,
             "years": years, "vms": [vm_out(v) for v in alive_end], "removed": [vm_out(v) for v in removed],
             "estimated_dates": sum(1 for v in alive_end if v["created_estimated"])}
+
+
+# -----------------------------------------------------------------------------
+# FinOps: VMs mal dimensionadas e economia possível
+# -----------------------------------------------------------------------------
+NET_RX, NET_TX, FS_MAX, UPTIME, DISK_USED, AVAIL = 30, 31, 62, 41, 21, 40
+# Limiares (uso medido pelo percentil 95 das médias de cada ponto do período)
+CPU_LOW, CPU_HIGH, MEM_LOW, MEM_HIGH = 40.0, 85.0, 40.0, 90.0
+TARGET = 70.0  # uso alvo depois do ajuste
+FS_FULL, DISK_SPARE = 90.0, 30.0
+IDLE_CPU = 2.0
+
+
+def _round_gb(gb: float, windows: bool) -> int:
+    """Memória recomendada em GB "redondos" (1, 2, 4, 6, 8, 12, 16, 24, 32...)."""
+    steps = [1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024]
+    floor = 4 if windows else 1
+    return next((x for x in steps if x >= max(gb, floor)), int(math.ceil(gb)))
+
+
+def _pstats(points: dict[datetime, tuple[float, float]] | None) -> dict[str, float | None]:
+    """Média, P95 (das médias dos pontos) e pico (máximo bruto) de uma série."""
+    if not points:
+        return {"avg": None, "p95": None, "peak": None, "last": None}
+    vals = [v for v, _ in points.values() if v is not None]
+    if not vals:
+        return {"avg": None, "p95": None, "peak": None, "last": None}
+    s = sorted(vals)
+    last = points[max(points)][0]
+    return {"avg": sum(vals) / len(vals), "p95": s[min(len(s) - 1, max(0, math.ceil(len(s) * 0.95) - 1))],
+            "peak": max(mx for _, mx in points.values() if mx is not None), "last": last}
+
+
+def _analyse(vm: dict[str, Any], st: dict[int, dict[str, float | None]], days: float) -> dict[str, Any]:
+    """Recomendações de right-sizing de uma VM a partir das estatísticas do período."""
+    recs: list[dict[str, Any]] = []
+    saving = {"vcpu": 0.0, "memory_gb": 0.0, "disk_gb": 0.0}
+    extra = {"vcpu": 0.0, "memory_gb": 0.0, "disk_gb": 0.0}
+    vcpu = int(vm["vcpu"] or 0)
+    mem_gb = (vm["memory_bytes"] or 0) / GB
+    windows = "windows" in (vm["os"] or "").lower()
+    cpu, mem = st.get(CPU_PCT, {}), st.get(MEM_PCT, {})
+    up = st.get(AVAIL, {})
+    on_ratio = up.get("avg")
+    disk_cap = st.get(DISK_CAP, {}).get("last") or vm["disk_bytes"]
+    disk_used = st.get(DISK_USED, {}).get("last")
+    fs_max = st.get(FS_MAX, {}).get("last")
+
+    if cpu.get("avg") is None and mem.get("avg") is None:
+        if on_ratio is not None and on_ratio < 0.01 or (on_ratio is None and vm["status"] != "up"):
+            gb = (disk_cap or 0) / GB
+            recs.append({"kind": "off", "level": "warn", "title": "VM desligada no período",
+                         "text": f"Ficou desligada o período todo e mantém {gb:,.0f} GB de disco e {vcpu} vCPU / "
+                                 f"{mem_gb:,.0f} GB reservados. Avalie arquivar ou remover."
+                         .replace(",", ".")})
+            saving["disk_gb"] += gb
+            return {"status": "warn", "recs": recs, "saving": saving, "extra": extra}
+        recs.append({"kind": "nodata", "level": "info", "title": "Sem métricas no período",
+                     "text": "Sem leituras de uso de CPU e memória neste período (VMware Tools ou permissão de "
+                             "métricas). Não há como avaliar o dimensionamento."})
+        return {"status": "nodata", "recs": recs, "saving": saving, "extra": extra}
+
+    # CPU
+    p95, peak, avg = cpu.get("p95"), cpu.get("peak"), cpu.get("avg")
+    if p95 is not None and vcpu:
+        if p95 >= CPU_HIGH or (peak is not None and peak >= 98 and p95 >= 70):
+            new = max(vcpu + 1, math.ceil(vcpu * p95 / TARGET))
+            recs.append({"kind": "cpu_up", "level": "crit", "title": "CPU sob pressão",
+                         "text": f"Uso médio de {avg:.0f}%, P95 de {p95:.0f}% e pico de {peak:.0f}% da capacidade. "
+                                 f"Recomenda-se aumentar de {vcpu} para {new} vCPU.", "from": vcpu, "to": new})
+            extra["vcpu"] += new - vcpu
+        elif p95 < CPU_LOW and vcpu > 1:
+            new = max(1, math.ceil(vcpu * max(p95, 1) / TARGET))
+            if peak is not None and peak >= 90:
+                new = max(new, vcpu - max(1, vcpu // 4))  # picos altos: reduz com cautela
+            if new < vcpu:
+                recs.append({"kind": "cpu_down", "level": "warn", "title": "CPU ociosa (right-sizing)",
+                             "text": f"Uso médio de {avg:.0f}% e P95 de {p95:.0f}% (pico {peak:.0f}%). "
+                                     f"Recomenda-se reduzir de {vcpu} para {new} vCPU.", "from": vcpu, "to": new})
+                saving["vcpu"] += vcpu - new
+    # Memória
+    p95, peak, avg = mem.get("p95"), mem.get("peak"), mem.get("avg")
+    if p95 is not None and mem_gb:
+        if p95 >= MEM_HIGH:
+            new = _round_gb(mem_gb * p95 / TARGET, windows)
+            new = max(new, _round_gb(mem_gb + 1, windows))
+            recs.append({"kind": "mem_up", "level": "crit", "title": "Memória sob pressão",
+                         "text": f"Uso médio de {avg:.0f}%, P95 de {p95:.0f}% de {mem_gb:.0f} GB. "
+                                 f"Recomenda-se aumentar para {new} GB.", "from": mem_gb, "to": new})
+            extra["memory_gb"] += new - mem_gb
+        elif p95 < MEM_LOW:
+            new = _round_gb(mem_gb * max(p95, 1) / TARGET, windows)
+            if new < mem_gb:
+                recs.append({"kind": "mem_down", "level": "warn", "title": "Memória ociosa (right-sizing)",
+                             "text": f"Uso médio de {avg * mem_gb / 100:.1f} de {mem_gb:.0f} GB ({avg:.0f}%), "
+                                     f"P95 de {p95:.0f}% e pico de {peak:.0f}%. Recomenda-se reduzir para {new} GB.",
+                             "from": mem_gb, "to": new})
+                saving["memory_gb"] += mem_gb - new
+    # Disco
+    if fs_max is not None and fs_max >= FS_FULL:
+        recs.append({"kind": "disk_full", "level": "crit", "title": "Volume quase cheio",
+                     "text": f"O volume mais cheio do sistema está com {fs_max:.0f}% ocupados. Amplie o disco ou "
+                             "libere espaço."})
+    elif disk_cap and disk_used is not None and disk_cap > 50 * GB and disk_used / disk_cap * 100 < DISK_SPARE:
+        free = (disk_cap - disk_used) / GB
+        target = math.ceil(disk_used / GB / (TARGET / 100))
+        recs.append({"kind": "disk_down", "level": "warn", "title": "Disco superprovisionado",
+                     "text": f"Usa {disk_used / GB:,.0f} de {disk_cap / GB:,.0f} GB ({disk_used / disk_cap * 100:.0f}%). "
+                             f"Cerca de {free:,.0f} GB provisionados sem uso; um disco de ~{target:,} GB atenderia "
+                             "(reduzir disco exige migrar os dados para um disco menor).".replace(",", "."),
+                     "from": disk_cap / GB, "to": target})
+        saving["disk_gb"] += disk_cap / GB - target
+    # Ociosa
+    cavg = cpu.get("avg")
+    net = (st.get(NET_RX, {}).get("avg") or 0) + (st.get(NET_TX, {}).get("avg") or 0)
+    if cavg is not None and cavg < IDLE_CPU and (cpu.get("peak") or 0) < 10 and net < 20_000 and days >= 7:
+        recs.insert(0, {"kind": "idle", "level": "warn", "title": "VM possivelmente ociosa",
+                        "text": f"CPU média de {cavg:.1f}% (pico {cpu.get('peak') or 0:.0f}%) e rede quase parada no "
+                                "período. Confirme com o responsável se ainda é usada; desligar ou remover libera "
+                                "todos os recursos."})
+    if not recs:
+        recs.append({"kind": "ok", "level": "ok", "title": "Dimensionamento adequado",
+                     "text": "O uso de CPU e memória ficou dentro da faixa esperada no período."})
+    levels = {r["level"] for r in recs}
+    status = "crit" if "crit" in levels else "warn" if "warn" in levels else "ok"
+    return {"status": status, "recs": recs, "saving": saving, "extra": extra}
+
+
+@router.get("/finops")
+async def finops(tenant_id: int | None = None, start: str | None = Query(default=None, max_length=40),
+                 end: str | None = Query(default=None, max_length=40),
+                 session: SessionInfo = Depends(require_permission("reports.view"))) -> dict[str, Any]:
+    s, e = _period(start, end, 30)
+    metrics = [CPU_PCT, CPU_MHZ, MEM_PCT, MEM_USED, DISK_CAP, DISK_USED, NET_RX, NET_TX, FS_MAX, UPTIME, AVAIL]
+    try:
+        async with session.db() as conn:
+            tenant = await _tenant(conn, session, tenant_id)
+            rows = await conn.fetch(
+                """SELECT id, name, status, os_name, attributes FROM assets
+                    WHERE tenant_id = $1 AND asset_type = 'vm' AND deleted_at IS NULL
+                    ORDER BY lower(name) LIMIT 5000""", tenant["id"])
+            ids = [r["id"] for r in rows]
+            axis, vals, tier = await _series(conn, ids, metrics, s, e)
+    except pool.DatabaseUnavailable as exc:
+        raise _db_error(exc) from exc
+
+    days = (e - s).total_seconds() / 86400
+    out, chart_budget = [], 100
+    totals = {"saving": {"vcpu": 0.0, "memory_gb": 0.0, "disk_gb": 0.0},
+              "extra": {"vcpu": 0.0, "memory_gb": 0.0, "disk_gb": 0.0},
+              "status": {"ok": 0, "warn": 0, "crit": 0, "nodata": 0},
+              "allocated": {"vcpu": 0.0, "memory_gb": 0.0, "disk_gb": 0.0}}
+    for r in rows:
+        a = _json(r["attributes"])
+        vm = {"id": r["id"], "name": r["name"], "os": a.get("guest_os") or r["os_name"], "status": r["status"],
+              "vcpu": _num(a.get("vcpu")), "memory_bytes": _num(a.get("memory_bytes")),
+              "disk_bytes": _num(a.get("disk_bytes"))}
+        st = {m: _pstats(vals.get((r["id"], m))) for m in metrics}
+        res = _analyse(vm, st, days)
+        cpu_mhz = st[CPU_MHZ]["avg"]
+        cap_mhz = (cpu_mhz * 100 / st[CPU_PCT]["avg"]) if cpu_mhz and st[CPU_PCT]["avg"] else None
+        volumes = [{"path": v.get("path"), "pct": round((1 - (v.get("free") or 0) / v["cap"]) * 100, 1)}
+                   for v in (a.get("volumes") or []) if isinstance(v, dict) and v.get("cap")]
+        item = {**vm, **res, "avg": {
+                    "cpu_pct": st[CPU_PCT]["avg"], "cpu_p95": st[CPU_PCT]["p95"], "cpu_peak": st[CPU_PCT]["peak"],
+                    "cpu_mhz": cpu_mhz, "cpu_capacity_mhz": cap_mhz,
+                    "mem_pct": st[MEM_PCT]["avg"], "mem_p95": st[MEM_PCT]["p95"], "mem_peak": st[MEM_PCT]["peak"],
+                    "mem_used_bytes": st[MEM_USED]["avg"], "disk_capacity_bytes": st[DISK_CAP]["last"] or vm["disk_bytes"],
+                    "disk_used_bytes": st[DISK_USED]["last"], "fs_max_pct": st[FS_MAX]["last"],
+                    "net_rx_bps": st[NET_RX]["avg"], "net_tx_bps": st[NET_TX]["avg"],
+                    "uptime_s": st[UPTIME]["last"]},
+                "volumes": volumes[:12]}
+        out.append(item)
+        totals["status"][res["status"]] += 1
+        for k in totals["saving"]:
+            totals["saving"][k] += res["saving"][k]
+            totals["extra"][k] += res["extra"][k]
+        totals["allocated"]["vcpu"] += vm["vcpu"] or 0
+        totals["allocated"]["memory_gb"] += (vm["memory_bytes"] or 0) / GB
+        totals["allocated"]["disk_gb"] += (item["avg"]["disk_capacity_bytes"] or 0) / GB
+    order = {"crit": 0, "warn": 1, "ok": 2, "nodata": 3}
+    out.sort(key=lambda v: (order[v["status"]], -(v["saving"]["vcpu"] * 4 + v["saving"]["memory_gb"]), v["name"].lower()))
+    # Gráfico por VM: as que pedem ação primeiro, até 100 (o relatório não fica pesado demais)
+    for item in out:
+        if item["status"] == "nodata" or chart_budget <= 0:
+            continue
+        chart_budget -= 1
+        item["series"] = {k: [round(x, 1) if x is not None else None for x in _carry(axis, vals.get((item["id"], m)))]
+                          for k, m in (("cpu", CPU_PCT), ("mem", MEM_PCT))}
+    for k in ("saving", "extra", "allocated"):
+        totals[k] = {x: round(y, 1) for x, y in totals[k].items()}
+    return {"tenant": tenant, "start": _iso(s), "end": _iso(e), "tier": tier,
+            "step_seconds": int((axis[1] - axis[0]).total_seconds()) if len(axis) > 1 else None,
+            "labels": [_iso(t) for t in axis], "vms": out, "totals": totals,
+            "thresholds": {"cpu_low": CPU_LOW, "cpu_high": CPU_HIGH, "mem_low": MEM_LOW, "mem_high": MEM_HIGH,
+                           "target": TARGET}}

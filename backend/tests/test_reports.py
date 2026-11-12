@@ -104,3 +104,34 @@ def test_client_panel_consumption_and_growth(client, fake):
     login(client)
     assert client.get("/api/reports/overview").status_code == 422
     assert client.get(f"/api/reports/overview?tenant_id={pollux['id']}").json()["totals"]["vms"] == 199
+
+
+def test_finops_right_sizing(client, fake):
+    csrf, provider, pollux, acme, integ = _setup(client)
+    ids = {n: sql("SELECT id FROM assets WHERE name = %s", n)[0][0] for n in ("vm-v1-20", "vm-v1-21", "vm-v1-22")}
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    rows = []
+    for i in range(24 * 20):
+        t = now - timedelta(hours=i + 1)
+        rows += [(t, pollux["id"], ids["vm-v1-20"], 1, 5.0), (t, pollux["id"], ids["vm-v1-20"], 10, 10.0),
+                 (t, pollux["id"], ids["vm-v1-21"], 1, 95.0), (t, pollux["id"], ids["vm-v1-21"], 10, 60.0),
+                 (t, pollux["id"], ids["vm-v1-22"], 1, 50.0), (t, pollux["id"], ids["vm-v1-22"], 10, 60.0)]
+    import psycopg
+    from pgsupport import admin_dsn
+    with psycopg.connect(admin_dsn(), autocommit=True) as c:
+        with c.cursor().copy("COPY openmon.metric_samples (time, tenant_id, asset_id, metric_id, value) "
+                             "FROM STDIN") as cp:
+            for r in rows:
+                cp.write_row(r)
+    new_user(client, csrf, "cli-pollux", tenant_ids=[pollux["id"]], must_change_password=False)
+    login(client, "cli-pollux", TEMP_PW)
+    f = client.get("/api/reports/finops?start=" + (now - timedelta(days=30)).date().isoformat()).json()
+    by = {v["name"]: v for v in f["vms"]}
+    over, hot, ok = by["vm-v1-20"], by["vm-v1-21"], by["vm-v1-22"]
+    assert over["status"] == "warn" and {r["kind"] for r in over["recs"]} >= {"cpu_down", "mem_down"}
+    assert over["saving"] == {"vcpu": 1, "memory_gb": 3, "disk_gb": 0} and "series" in over
+    assert hot["status"] == "crit" and hot["recs"][0]["kind"] == "cpu_up" and hot["extra"]["vcpu"] == 1
+    assert ok["status"] == "ok"
+    assert f["vms"][0]["status"] == "crit"  # mais graves primeiro
+    assert f["totals"]["saving"]["vcpu"] >= 1 and f["totals"]["status"]["nodata"] > 0
+    assert client.get(f"/api/reports/finops?tenant_id={acme['id']}").status_code == 404
