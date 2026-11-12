@@ -5,7 +5,7 @@ Duas telas novas, para todos os perfis (permissão `reports.view`; o Cliente só
 | Tela | O que mostra |
 |---|---|
 | **Painel** (`/painel.html`) | Contratado x em uso agora (CPU, memória e armazenamento do VDC), gráficos do consumo em 24 h, 7, 30, 90 dias ou 12 meses com a linha do contratado, VDCs e perfis de armazenamento, VMs mais exigidas e a lista de VMs. O usuário Cliente cai direto nesta tela ao entrar. |
-| **Relatórios** (`/relatorios.html`) | Cliente, tipo e período (De / Até ou atalhos). **Crescimento de recursos**: VMs, vCPU, memória e disco no fim de cada mês, variação desde o início, resumo por ano, ambiente atual, VMs criadas e removidas. **Consumo x contratado**: média, pico, percentil 95 e tempo acima de 90% de CPU, memória e armazenamento, com gráficos e VMs mais exigidas. Botões **Imprimir / PDF** (layout de papel A4, fundo branco) e **Baixar CSV** (separador `;`, decimal com vírgula). |
+| **Relatórios** (`/relatorios.html`) | Cliente, tipo e período (De / Até ou atalhos). **Crescimento de recursos**: VMs, vCPU, memória e disco no fim de cada mês, variação desde o início, resumo por ano, ambiente atual, VMs criadas e removidas. **Consumo x contratado**: média, pico, percentil 95 e tempo acima de 90% de CPU, memória e armazenamento, com gráficos e VMs mais exigidas. Botões **Baixar HTML** (relatório completo num arquivo só: estilo, logo e gráficos embutidos, abre offline em qualquer navegador e pode ser enviado ao cliente), **Imprimir / PDF** (layout de papel A4, fundo branco) e **Baixar CSV** (separador `;`, decimal com vírgula). |
 
 ## De onde vêm os números
 
