@@ -49,7 +49,11 @@ window.OpenMon = (function () {
     return out;
   }
 
-  const CLIENT_REDIRECT = { "/home.html": "/painel.html", "/inventario.html": "/vms.html" };
+  // O Início saiu do menu: todos entram no Painel. O cliente também não usa Inventário nem Alertas
+  // (a tela VMs mostra as VMs, o disco e os problemas ativos delas).
+  const ALL_REDIRECT = { "/home.html": "/painel.html" };
+  const CLIENT_REDIRECT = { ...ALL_REDIRECT, "/inventario.html": "/vms.html", "/alertas.html": "/vms.html",
+    "/alertas-config.html": "/vms.html" };
   const GLOBAL_ONLY = new Set(["/integracoes.html", "/tenants.html", "/usuarios.html", "/ad.html", "/seguranca.html",
     "/https.html"]);
 
@@ -66,11 +70,13 @@ window.OpenMon = (function () {
     // Telas que o cliente não usa: o Painel faz o papel do Início e a tela VMs substitui o Inventário.
     // Vale pelo caminho, não só pelo data-nav, para não depender do HTML que o navegador guardou.
     const isGlobal = u.scope === "global";
-    if (!isGlobal && CLIENT_REDIRECT[location.pathname]) { location.replace(CLIENT_REDIRECT[location.pathname]); return null; }
+    const go = (isGlobal ? ALL_REDIRECT : CLIENT_REDIRECT)[location.pathname];
+    if (go) { location.replace(go); return null; }
     document.querySelectorAll("#nav a, [data-nav]").forEach((a) => {
       const need = a.getAttribute("data-nav");
       const path = (a.getAttribute("href") || "").split("?")[0];
       a.hidden = (need === "admin" && u.role !== "global_admin") || (need === "global" && !isGlobal)
+        || ALL_REDIRECT[path] !== undefined
         || (!isGlobal && (CLIENT_REDIRECT[path] !== undefined || GLOBAL_ONLY.has(path)));
     });
     const nav = $("nav");

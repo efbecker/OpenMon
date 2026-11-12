@@ -70,8 +70,14 @@
     if (l.fs_max_pct !== undefined) return l.fs_max_pct;
     const vols = (a.attributes || {}).volumes || [];
     if (vols.length) return Math.max(...vols.map((v) => (100 * (v.cap - v.free)) / v.cap));
-    if (l.disk_used !== undefined && l.disk_capacity) return (100 * l.disk_used) / l.disk_capacity;
     return undefined;
+  }
+
+  // Sem VMware Tools só há o disco no datastore: usado (com snapshots e swap) sobre o provisionado.
+  // Pode passar de 100% e não é espaço livre dentro da VM, então não entra na saúde nem nos alertas.
+  function datastorePct(a) {
+    const l = a.latest || {};
+    return l.disk_used !== undefined && l.disk_capacity ? (100 * l.disk_used) / l.disk_capacity : undefined;
   }
 
   function vmValues(a) {
@@ -200,10 +206,10 @@
       kpi("Tráfego de rede agora", bps(net), tn ? `Maior: ${tn[0].name}` : "", "k-info"));
   }
 
-  function mini(label, x, k) {
-    const bar = el("span", { cls: "mini-fill " + level(x, k) });
+  function mini(label, x, k, title) {
+    const bar = el("span", { cls: "mini-fill " + (k ? level(x, k) : "lv-neutral") });
     bar.style.width = `${x === undefined ? 0 : Math.max(2, Math.min(100, x))}%`;
-    return el("div", { cls: "mini" }, el("span", { cls: "mini-k", text: label }),
+    return el("div", { cls: "mini", attrs: title ? { title } : {} }, el("span", { cls: "mini-k", text: label }),
       el("span", { cls: "mini-v " + level(x, k), text: x === undefined ? "--" : pct(x >= 10 ? Math.round(x) : Math.round(x * 10) / 10) }),
       el("span", { cls: "mini-bar" }, bar));
   }
@@ -220,7 +226,8 @@
       el("div", { cls: "vm-os" }, el("span", { cls: "os-badge os-" + kind.toLowerCase().replace("—", "none"), text: kind === "—" ? "?" : kind }),
         el("span", { cls: "vm-os-name", text: os || "sistema não informado" })),
       el("div", { cls: "vm-sub" + (fine ? "" : " why"), text: sub || "" }),
-      el("div", { cls: "vm-minis" }, mini("CPU", v.cpu, "cpu"), mini("MEM", v.mempct, "mem"), mini("DISCO", v.disk, "disk")));
+      el("div", { cls: "vm-minis" }, mini("CPU", v.cpu, "cpu"), mini("MEM", v.mempct, "mem"), v.disk !== undefined ? mini("DISCO", v.disk, "disk")
+        : mini("DATASTORE", datastorePct(a), null, "Disco no datastore (sem leitura dos volumes pelo VMware Tools)")));
     c.addEventListener("click", () => openDetail(a.id, true));
     return c;
   }
@@ -335,8 +342,9 @@
       const where = [isGlobal ? ORIGIN[at.hypervisor] : "", at.vdc || (isGlobal ? at.cluster || a.parent_name : "")].filter(Boolean).join(" · ");
       const name = el("td", null, el("strong", { text: a.name }), el("div", { cls: "muted small", text: [shortOs(a), where, a.ip].filter(Boolean).join(" · ") }));
       const l = a.latest || {};
-      const disk = v.disk !== undefined ? pct(Math.round(v.disk)) + (l.disk_capacity ? ` · ${bytes(l.disk_capacity)}` : "")
-        : l.disk_capacity ? bytes(l.disk_capacity) : "—";
+      const ds = datastorePct(a);
+      const disk = v.disk !== undefined ? `volume ${pct(Math.round(v.disk))}` + (l.disk_capacity ? ` · ${bytes(l.disk_capacity)}` : "")
+        : l.disk_capacity ? `${bytes(l.disk_capacity)}${ds !== undefined ? ` · datastore ${pct(Math.round(ds))}` : ""}` : "—";
       const net = v.net === undefined ? "—" : `${bps(l.net_rx_bps)} / ${bps(l.net_tx_bps)}`;
       const open = button("Gráficos", "ghost", () => openDetail(a.id, true));
       return el("tr", { cls: a.deleted_at ? "row-off" : a.status === "down" ? "row-warn" : v.on ? "" : "row-off" },
@@ -404,7 +412,16 @@
       rows = data.assets;
       tenants = data.tenants;
       const ids = new Set(rows.map((a) => a.id));
-      problems = (pr.problems || []).filter((p) => ids.has(p.asset_id));
+      // Volume acima de 90% e de 97% na mesma VM: fica só o mais grave (a lista já vem por severidade)
+      const seen = new Set();
+      problems = (pr.problems || []).filter((p) => {
+        if (!ids.has(p.asset_id)) return false;
+        const disk = /^Volume de disco da VM/.test(p.trigger_name || "") || /Volume mais cheio/.test(p.message || "");
+        const key = `${p.asset_id}:${disk ? "disk" : p.trigger_id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       const keep = $("filter-tenant").value;
       $("filter-tenant").replaceChildren(el("option", { text: "Todos os tenants", attrs: { value: "" } }),
         ...tenants.map((t) => el("option", { text: t.name, attrs: { value: String(t.id) } })));

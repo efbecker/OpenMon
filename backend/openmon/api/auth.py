@@ -33,8 +33,8 @@ COOKIE = "__Host-openmon_session"
 
 
 def home_for(user) -> str:
-    """Primeira tela depois do login: o cliente cai no Painel (o Início é a tela do provedor)."""
-    return "/home.html" if user.get("scope") == "global" else "/painel.html"
+    """Primeira tela depois do login: o Painel, para todos (o Início saiu do menu)."""
+    return "/painel.html"
 IP_MAX_FAILURES = 30          # por IP, na mesma janela do bloqueio de conta
 GENERIC_FAIL = "Usuário ou senha inválidos."
 LOCKED_FAIL = "Muitas tentativas para este usuário. Aguarde alguns minutos e tente de novo."

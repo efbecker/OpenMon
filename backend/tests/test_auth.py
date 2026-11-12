@@ -32,7 +32,7 @@ def test_login_sets_hardened_cookie_and_csrf(client):
     r = login(client)
     assert r.status_code == 200
     body = r.json()
-    assert body["user"]["role"] == "global_admin" and body["redirect"] == "/home.html"
+    assert body["user"]["role"] == "global_admin" and body["redirect"] == "/painel.html"
     cookie = r.headers["set-cookie"]
     assert cookie.startswith(auth.COOKIE + "=")
     for flag in ("HttpOnly", "Secure", "SameSite=strict", "Path=/"):
