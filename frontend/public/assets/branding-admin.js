@@ -24,11 +24,32 @@
     $("flash").hidden = !msg;
   }
 
+  // Imagem grande demais (ex.: logo PNG em alta resolução): reduz no navegador antes de enviar.
+  const FIT = { logo: [1200, 400, "image/png"], favicon: [128, 128, "image/png"], banner: [2400, 1800, "image/webp"] };
+  async function fit(slot, file) {
+    const raster = /^image\/(png|jpeg|webp)$/.test(file.type);
+    const [mw, mh, type] = FIT[slot.kind];
+    if (!raster || typeof createImageBitmap !== "function") return file;
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (_) { return file; }
+    const scale = Math.min(1, mw / bmp.width, mh / bmp.height);
+    if (scale === 1 && file.size <= data.limits[slot.kind].max_bytes) return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bmp.width * scale));
+    canvas.height = Math.max(1, Math.round(bmp.height * scale));
+    canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((ok) => canvas.toBlob(ok, type, 0.9));
+    if (!blob || blob.size >= file.size) return file;
+    const ext = type === "image/webp" ? "webp" : "png";
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + "." + ext, { type: blob.type });
+  }
+
   async function send(slot, file, btn, errId) {
     showError(errId, "");
     flash("");
     const lim = data.limits[slot.kind];
     if (!file) { showError(errId, "Escolha um arquivo primeiro."); return; }
+    file = await fit(slot, file);
     if (file.size > lim.max_bytes) { showError(errId, `Arquivo de ${size(file.size)}: o limite é ${lim.hint}.`); return; }
     btn.disabled = true;
     try {
@@ -78,7 +99,7 @@
   function preview(slot, item) {
     const box = el("div", { cls: `brand-preview brand-preview-${slot.kind}` });
     if (item) box.append(el("img", { attrs: { src: item.url, alt: slot.title } }));
-    else box.append(el("span", { cls: "muted small", text: "nenhum (padrão do OpenMon)" }));
+    else box.append(el("span", { cls: "muted small", text: slot.kind === "logo" ? "nenhum: cabeçalho, login e relatórios mostram o OpenMon" : "nenhum (padrão do OpenMon)" }));
     return box;
   }
 
@@ -97,7 +118,9 @@
     input.addEventListener("change", () => {
       showError(errId, "");
       const f = input.files[0];
-      if (f && f.size > lim.max_bytes) showError(errId, `Arquivo de ${size(f.size)}: o limite é ${lim.hint}.`);
+      if (f && f.size > lim.max_bytes && !/^image\/(png|jpeg|webp)$/.test(f.type)) {
+        showError(errId, `Arquivo de ${size(f.size)}: o limite é ${lim.hint}.`);
+      }
     });
     const meta = item
       ? el("div", { cls: "muted tiny", text: `${item.filename ? item.filename + " · " : ""}${size(item.size)} · enviado por ${item.uploaded_by || "—"} em ${when(item.uploaded_at)}` })

