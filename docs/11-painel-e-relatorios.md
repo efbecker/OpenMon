@@ -32,3 +32,26 @@ O histórico de métricas fica com o tenant que o ativo tinha no momento da leit
 `start`/`end` aceitam `AAAA-MM-DD` (dia inteiro) ou data/hora ISO 8601. O Cliente com um só tenant pode omitir `tenant_id`.
 
 Gráficos: Chart.js 4.4.1 (MIT) versionado em `frontend/public/assets/vendor/`, sem CDN (a CSP só permite `'self'`).
+
+## Relatório FinOps: dimensionamento das VMs
+
+Em **Relatórios > FinOps: dimensionamento das VMs**: para cada VM do cliente, o alocado (vCPU, capacidade em GHz, memória,
+disco), as médias de consumo no período (CPU, memória, volumes, rede, uptime), a análise e o gráfico de CPU e memória.
+No topo, o resumo, as vCPU/GB liberáveis e, com os preços por vCPU, GB de RAM e GB de disco (opcionais, ficam salvos
+no navegador), a economia mensal estimada. Sai em HTML, PDF e CSV como os outros.
+
+Regras (medidas pelo percentil 95 das médias de cada ponto do período, para um pico isolado não decidir):
+
+| Situação | Critério | Recomendação |
+|---|---|---|
+| CPU ociosa | P95 < 40% e mais de 1 vCPU | vCPU para ~70% de uso (com picos acima de 90%, reduz no máximo 1/4) |
+| CPU sob pressão | P95 ≥ 85% (ou pico de 98% com P95 ≥ 70%) | vCPU para ~70% de uso, no mínimo +1 |
+| Memória ociosa | P95 < 40% | memória para ~70% de uso, em tamanhos redondos (mínimo 4 GB no Windows, 1 GB no Linux) |
+| Memória sob pressão | P95 ≥ 90% | memória para ~70% de uso |
+| Volume quase cheio | volume mais cheio ≥ 90% | ampliar ou limpar |
+| Disco superprovisionado | disco > 50 GB com menos de 30% usado | disco para ~70% de uso (exige migrar os dados) |
+| VM ociosa | CPU média < 2%, pico < 10% e rede quase parada, em 7 dias ou mais | confirmar uso; desligar ou remover |
+| Desligada no período | sem leitura ligada | arquivar ou remover (libera o disco) |
+
+A ordem é: sob pressão primeiro, depois as que mais economizam. Até 100 VMs ganham gráfico (as que pedem ação primeiro).
+API: `GET /api/reports/finops?tenant_id=&start=&end=`.

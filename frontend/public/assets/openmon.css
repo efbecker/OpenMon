@@ -583,3 +583,32 @@ body.with-hero .auth-page { gap: 40px; flex-wrap: wrap; }
 .mini-fill.lv-neutral { background: var(--muted); opacity: 0.6; }
 .prob-list li.clickable { cursor: pointer; }
 .prob-list li.clickable:hover strong { text-decoration: underline; }
+
+/* Relatório FinOps */
+.rep-form.prices { grid-template-columns: repeat(3, minmax(160px, 220px)) 1fr; }
+.ai-box { background: rgba(96, 165, 250, 0.08); border: 1px solid rgba(96, 165, 250, 0.3); border-left: 4px solid var(--info);
+  border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; line-height: 1.6; font-size: 14px; }
+.ai-box strong { color: #bfdbfe; }
+.dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: middle; }
+.dot.ok { background: var(--accent); } .dot.warn { background: var(--warn); }
+.dot.crit { background: var(--danger); } .dot.nodata { background: #475569; }
+.vm-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; margin-top: 16px; break-inside: avoid; }
+.vm-card h3 { margin: 0 0 14px; font-size: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.vm-boxes { display: grid; grid-template-columns: 1fr 1.2fr 1.8fr; gap: 14px; }
+.vm-box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.7; }
+.vm-box .k { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
+.vm-box b { font-family: var(--mono); font-weight: 600; }
+.recs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.recs li { padding-left: 12px; border-left: 3px solid var(--border-2); }
+.recs li.crit { border-left-color: var(--danger); } .recs li.warn { border-left-color: var(--warn); }
+.recs li.ok { border-left-color: var(--accent); }
+.vm-card .chart-box { height: 180px; margin-top: 14px; }
+.rec-short { font-size: 12.5px; }
+.rec-short .crit { color: var(--danger); } .rec-short .warn { color: var(--warn); } .rec-short .ok { color: var(--accent); }
+@media (max-width: 1000px) { .vm-boxes, .rep-form.prices { grid-template-columns: 1fr; } }
+@media print {
+  .ai-box, .vm-card, .vm-box { background: #fff; border-color: #d1d5db; }
+  .ai-box strong { color: #1d4ed8; }
+}
+#f-table td:last-child { text-align: left; white-space: normal; }
