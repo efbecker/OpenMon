@@ -30,6 +30,11 @@ from openmon.db import pool
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 COOKIE = "__Host-openmon_session"
+
+
+def home_for(user) -> str:
+    """Primeira tela depois do login: o cliente cai no Painel (o Início é a tela do provedor)."""
+    return "/home.html" if user.get("scope") == "global" else "/painel.html"
 IP_MAX_FAILURES = 30          # por IP, na mesma janela do bloqueio de conta
 GENERIC_FAIL = "Usuário ou senha inválidos."
 LOCKED_FAIL = "Muitas tentativas para este usuário. Aguarde alguns minutos e tente de novo."
@@ -459,7 +464,7 @@ async def login(form: LoginForm, request: Request, response: Response) -> dict[s
         if isinstance(expires, datetime) else settings["auth.session"]["absolute_hours"] * 3600
     response.set_cookie(COOKIE, token, max_age=max_age, path="/", secure=True, httponly=True, samesite="strict")
     response.headers["Cache-Control"] = "no-store"
-    redirect = "/senha.html" if user.get("must_change_password") else "/home.html"
+    redirect = "/senha.html" if user.get("must_change_password") else home_for(user)
     return {"user": _public_user(user), "csrf_token": csrf, "redirect": redirect}
 
 
@@ -548,4 +553,4 @@ async def change_password(form: PasswordForm, request: Request,
     except pool.DatabaseUnavailable as exc:
         raise _db_error(exc) from exc
     authlog.event("auth.password_change", ip_text, username=user["username"], source="local")
-    return {"ok": True, "redirect": "/home.html"}
+    return {"ok": True, "redirect": home_for(user)}

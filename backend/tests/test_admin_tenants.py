@@ -175,10 +175,10 @@ def test_client_first_login_must_change_password_and_sees_only_own_tenant(client
     assert bad.status_code == 422
     ok = client.post("/api/auth/password", json={"current_password": TEMP_PW, "new_password": NEW_PW},
                      headers=h(csrf))
-    assert ok.status_code == 200, ok.text
+    assert ok.status_code == 200 and ok.json()["redirect"] == "/painel.html", ok.text
 
     csrf, body = login(client, "cliente1", NEW_PW)
-    assert body["redirect"] == "/home.html"
+    assert body["redirect"] == "/painel.html"  # cliente não tem o Início do provedor
     me = client.get("/api/auth/me").json()["user"]
     assert me["tenants"] == ["ACME S.A."] and not me["must_change_password"]
     # Cliente não administra nada nem lista todos os tenants

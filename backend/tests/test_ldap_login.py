@@ -75,7 +75,7 @@ def test_configure_test_and_login_with_groups(client):
     _, out = login(client, "carlos", "Carlos-Ldap-Pass-1")
     me = client.get("/api/auth/me").json()["user"]
     assert me["auth_source"] == "ldap" and me["role"] == "client" and me["tenants"] == ["ACME S.A."]
-    assert out["redirect"] == "/home.html" and not me["must_change_password"]
+    assert out["redirect"] == "/painel.html" and not me["must_change_password"]
     assert client.get("/api/admin/tenants").status_code == 403
 
     # Operador pelo grupo NOC
