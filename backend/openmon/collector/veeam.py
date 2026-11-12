@@ -180,28 +180,132 @@ class Api(_Base):
     async def jobs(self, sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return await self.all("/api/v1/jobs/states")
 
+    async def org_quotas(self) -> list[dict[str, Any]]:
+        return []  # quotas do vCloud só vêm pelo Enterprise Manager
+
+    diag: list[str] = []
+
 
 def _uid(v: Any) -> str:
     """``urn:veeam:Job:6d1f...`` -> ``6d1f...`` (o mesmo id que aparece nos hrefs)."""
     return str(v or "").rsplit(":", 1)[-1]
 
 
-def _find_list(obj: Any, key: str) -> list[dict[str, Any]]:
-    """Lista ``key`` em qualquer nível do JSON do Enterprise Manager (``{"Entities": {"Jobs": {"Jobs": [...]}}}``)."""
-    if isinstance(obj, dict):
-        v = obj.get(key)
-        if isinstance(v, list):
-            return [x for x in v if isinstance(x, dict)]
-        for k in (key, *[k for k in obj if k != key]):
-            if isinstance(obj.get(k), dict):
-                found = _find_list(obj[k], key)
-                if found:
-                    return found
-    return []
+def _xml(text: str) -> Any:
+    """XML do Enterprise Manager -> dict (atributos e filhos viram chaves; filhos repetidos, listas)."""
+    import xml.etree.ElementTree as ET
+
+    def conv(e: Any) -> Any:
+        kids = list(e)
+        if not kids and not e.attrib:
+            return (e.text or "").strip()
+        d: dict[str, Any] = dict(e.attrib)
+        for k in kids:
+            tag = k.tag.rsplit("}", 1)[-1]
+            v = conv(k)
+            if tag in d:
+                d[tag] = d[tag] if isinstance(d[tag], list) else [d[tag]]
+                d[tag].append(v)
+            else:
+                d[tag] = v
+        return d
+    root = ET.fromstring(text)
+    return {root.tag.rsplit("}", 1)[-1]: conv(root)}
+
+
+def _lower(o: Any) -> Any:
+    """O EM devolve PascalCase ou camelCase conforme a versão: chaves em minúsculas, uma vez só."""
+    if isinstance(o, dict):
+        return {str(k).lower(): _lower(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_lower(x) for x in o]
+    return o
+
+
+def _entities(obj: Any, kind: str) -> list[dict[str, Any]]:
+    """Entidades ``urn:veeam:<kind>:...`` em qualquer nível da resposta (sem as referências/links)."""
+    prefix = f"urn:veeam:{kind.lower()}:"
+    out: dict[str, dict[str, Any]] = {}
+
+    def walk(n: Any, depth: int) -> None:
+        if depth > 10:
+            return
+        if isinstance(n, list):
+            for x in n:
+                walk(x, depth + 1)
+            return
+        if not isinstance(n, dict):
+            return
+        uid = str(n.get("uid") or "")
+        if uid.lower().startswith(prefix) and not str(n.get("type") or "").lower().endswith("reference"):
+            out.setdefault(uid, n)
+            return
+        for k, v in n.items():
+            if k != "links":
+                walk(v, depth + 1)
+    walk(obj, 0)
+    return list(out.values())
+
+
+def _with_fields(obj: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Objetos que têm algum dos campos, como o template do Zabbix faz com as orgConfigs."""
+    out: list[dict[str, Any]] = []
+
+    def walk(n: Any, depth: int) -> None:
+        if depth > 10:
+            return
+        if isinstance(n, list):
+            for x in n:
+                walk(x, depth + 1)
+        elif isinstance(n, dict):
+            if any(n.get(f) not in (None, "") for f in fields):
+                out.append(n)
+                return
+            for v in n.values():
+                walk(v, depth + 1)
+    walk(obj, 0)
+    return out
+
+
+def _shape(node: Any, depth: int = 0) -> str:
+    """Só os nomes dos campos e tamanhos das listas, para diagnóstico quando nada é encontrado."""
+    if not isinstance(node, (dict, list)):
+        return type(node).__name__
+    if depth > 3:
+        return "..."
+    if isinstance(node, list):
+        return f"[{len(node)}{' x ' + _shape(node[0], depth + 1) if node else ''}]"
+    return "{" + ",".join(f"{k}:{_shape(v, depth + 1)}" for k, v in node.items()) + "}"
+
+
+def _num(v: Any) -> float | None:
+    if v in (None, ""):
+        return None
+    try:
+        return float(str(v).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _bool(v: Any) -> bool | None:
+    if v in (None, ""):
+        return None
+    if isinstance(v, bool):
+        return v
+    return str(v).lower() in ("1", "true", "yes", "sim", "on")
+
+
+ORG_QUOTA_FIELDS = ("quotagb", "quotamb", "usedquotamb", "usedquotagb", "usedspacemb")
 
 
 class EmApi(_Base):
-    """API REST do Veeam Backup Enterprise Manager (porta 9398)."""
+    """API REST do Veeam Backup Enterprise Manager (porta 9398).
+
+    As respostas variam entre versões (JSON PascalCase, camelCase ou XML, listas embrulhadas de jeitos
+    diferentes): tudo vira dict com chaves minúsculas e as entidades são achadas pelo UID
+    (``urn:veeam:Job:...``), em qualquer nível. O serviço de consulta (``/api/query``) vem primeiro; se ele não
+    trouxer nada, as coleções diretas (``/api/jobs``, ``/api/repositories``...) são lidas.
+    """
 
     api = "em"
     product = "Veeam Backup Enterprise Manager"
@@ -210,6 +314,8 @@ class EmApi(_Base):
     def __init__(self, integ: Integration) -> None:
         super().__init__(integ, {})
         self.session_id: str | None = None
+        self.logon_id = ""
+        self.diag: list[str] = []
 
     async def __aenter__(self) -> "EmApi":
         try:
@@ -229,8 +335,9 @@ class EmApi(_Base):
             raise
         self.client.headers["X-RestSvcSessionId"] = self.session_id
         try:
-            self.logon_id = _uid((r.json() or {}).get("SessionId") or (r.json() or {}).get("UID"))
-        except ValueError:
+            body = self._parse(r)
+            self.logon_id = _uid(_with_fields(body, ("sessionid",))[0]["sessionid"]) if body else ""
+        except (ValueError, IndexError, KeyError):
             self.logon_id = ""
         return self
 
@@ -242,69 +349,104 @@ class EmApi(_Base):
             pass
         await self.client.aclose()
 
-    async def query(self, type_: str, key: str, stop: Any = None, **params: Any) -> list[dict[str, Any]]:
+    @staticmethod
+    def _parse(r: httpx.Response) -> Any:
+        text = r.text.lstrip("﻿").strip()
+        if not text:
+            return {}
+        if text.startswith("<"):
+            try:
+                return _lower(_xml(text))
+            except Exception as exc:  # noqa: BLE001 - XML inesperado vira erro de coleta legível
+                raise CollectorError(f"resposta XML inválida do Enterprise Manager em {r.request.url.path}") from exc
+        return _lower(r.json())
+
+    async def get(self, path: str, **params: Any) -> Any:
+        r = await self.client.get(path, params=params)
+        await self._check(r)
+        return self._parse(r)
+
+    async def _query(self, type_: str, stop: Any = None, **params: Any) -> list[dict[str, Any]]:
         """Serviço de consulta paginado; ``stop(lista_da_página)`` encerra antes (sessões em ordem decrescente)."""
-        out: list[dict[str, Any]] = []
+        out: dict[str, dict[str, Any]] = {}
         page = 1
         while True:
             body = await self.get("/api/query", type=type_, format="Entities", pageSize=PAGE, page=page, **params)
-            data = _find_list(body, key)
-            out.extend(data)
-            paging = body.get("PagingInfo") if isinstance(body, dict) else None
-            pages = paging.get("PagesCount") if isinstance(paging, dict) else None
-            if not data or len(data) < PAGE or (pages is not None and page >= int(pages)) or page >= 400:
-                return out
+            data = _entities(body, type_)
+            if not data and page == 1:
+                self.diag.append(f"query {type_}: {_shape(body)[:300]}")
+            new = [d for d in data if d["uid"] not in out]
+            out.update((d["uid"], d) for d in new)
+            paging = _with_fields(body, ("pagescount",))
+            pages = _num(paging[0].get("pagescount")) if paging else None
+            if not new or len(data) < PAGE or (pages is not None and page >= pages) or page >= 400:
+                return list(out.values())
             if stop and stop(data):
-                return out
+                return list(out.values())
             page += 1
 
+    async def _list(self, type_: str, path: str, stop: Any = None, **params: Any) -> list[dict[str, Any]]:
+        try:
+            got = await self._query(type_, stop=stop, **params)
+        except CollectorError as exc:
+            self.diag.append(f"query {type_}: {str(exc)[:150]}")
+            got = []
+        if got:
+            return got
+        body = await self.get(path, format="Entity")
+        got = _entities(body, type_)
+        if not got:
+            self.diag.append(f"{path}: {_shape(body)[:300]}")
+        return got
+
     async def server_info(self) -> dict[str, Any]:
-        servers = await self.query("BackupServer", "BackupServers")
-        names = [s.get("Name") for s in servers if s.get("Name")]
-        versions = sorted({str(s.get("Version")) for s in servers if s.get("Version")})
+        servers = await self._list("BackupServer", "/api/backupServers")
+        names = [str(s.get("name")) for s in servers if s.get("name")]
+        versions = sorted({str(s.get("version")) for s in servers if s.get("version")})
         return {"name": names[0] if len(names) == 1 else f"Enterprise Manager {self.integ.endpoint}",
-                "buildVersion": ", ".join(versions), "vbrId": None, "servers": names,
-                "patches": None}
+                "buildVersion": ", ".join(versions), "vbrId": None, "servers": names, "patches": None}
 
     async def count(self, what: str) -> int:
-        key = {"jobs": ("Job", "Jobs"), "repositories": ("Repository", "Repositories")}[what]
-        return len(await self.query(*key))
+        if what == "jobs":
+            return len(await self._list("Job", "/api/jobs"))
+        if what == "repositories":
+            return len(await self._list("Repository", "/api/repositories"))
+        return len(await self.org_quotas())
 
     async def repositories(self) -> list[dict[str, Any]]:
         out = []
-        for r in await self.query("Repository", "Repositories"):
-            cap, free = r.get("Capacity"), r.get("FreeSpace")
-            out.append({"id": _uid(r.get("UID")), "name": r.get("Name"), "type": r.get("Kind"),
-                        "capacityGB": cap / GB if isinstance(cap, (int, float)) and cap >= 0 else None,
-                        "freeGB": free / GB if isinstance(free, (int, float)) and free >= 0 else None})
+        for r in await self._list("Repository", "/api/repositories"):
+            cap, free = _num(r.get("capacity")), _num(r.get("freespace"))
+            out.append({"id": _uid(r.get("uid")), "name": r.get("name"), "type": r.get("kind"),
+                        "capacityGB": cap / GB if cap is not None and cap >= 0 else None,
+                        "freeGB": free / GB if free is not None and free >= 0 else None})
         return [r for r in out if r["id"]]
 
     @staticmethod
     def _session(s: dict[str, Any]) -> dict[str, Any]:
-        end = s.get("EndTimeUTC") or s.get("EndTime")
-        return {"id": _uid(s.get("UID")), "jobId": _uid(s.get("JobUid")), "jobName": s.get("JobName"),
-                "creationTime": s.get("CreationTimeUTC") or s.get("CreationTime"),
-                "endTime": end if _ts(end) else None, "state": s.get("State"),
-                "result": {"result": s.get("Result"), "message": s.get("Description") or None}}
+        end = s.get("endtimeutc") or s.get("endtime")
+        return {"id": _uid(s.get("uid")), "jobId": _uid(s.get("jobuid")), "jobName": s.get("jobname"),
+                "creationTime": s.get("creationtimeutc") or s.get("creationtime"),
+                "endTime": end if _ts(end) else None, "state": s.get("state"),
+                "result": {"result": s.get("result"), "message": s.get("description") or None}}
 
     async def sessions(self, since: datetime, extra_ids: list[str]) -> list[dict[str, Any]]:
         def older(page: list[dict[str, Any]]) -> bool:
-            last = _ts(page[-1].get("CreationTimeUTC") or page[-1].get("CreationTime"))
-            return last is not None and last < since
-        raw = await self.query("BackupJobSession", "BackupJobSessions", stop=older, sortDesc="CreationTime")
+            times = [t for t in (_ts(s.get("creationtimeutc") or s.get("creationtime")) for s in page) if t]
+            return bool(times) and min(times) < since
+        raw = await self._list("BackupJobSession", "/api/backupSessions", stop=older, sortDesc="CreationTime")
         out = [self._session(s) for s in raw]
-        out = [s for s in out if (_ts(s["creationTime"]) or since) >= since]
+        out = [s for s in out if s["id"] and (_ts(s["creationTime"]) or since) >= since]
         have = {s["id"] for s in out}
         for sid in extra_ids[:200]:
             if sid in have:
                 continue
             try:
-                one = await self.get(f"/api/backupSessions/{sid}", format="Entity")
+                one = _entities(await self.get(f"/api/backupSessions/{sid}", format="Entity"), "BackupJobSession")
             except CollectorError:
                 continue
-            if isinstance(one, dict):
-                out.append(self._session(one))
-        out.sort(key=lambda s: str(s["creationTime"] or ""))
+            out.extend(self._session(s) for s in one)
+        out.sort(key=lambda s: _ts(s["creationTime"]) or since)
         return out
 
     async def jobs(self, sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -313,19 +455,54 @@ class EmApi(_Base):
         for s in sessions:  # em ordem crescente de criação
             latest[s["jobId"]] = s
         out = []
-        for j in await self.query("Job", "Jobs"):
-            jid = _uid(j.get("UID"))
+        for j in await self._list("Job", "/api/jobs"):
+            jid = _uid(j.get("uid"))
             if not jid:
                 continue
             s = latest.get(jid)
             running = bool(s) and _session_result(s) == "running"
-            status = "running" if running else ("disabled" if j.get("ScheduleEnabled") is False
-                                                and j.get("ScheduleConfigured") else "inactive")
-            out.append({"id": jid, "name": j.get("Name"), "type": j.get("JobType"), "status": status,
-                        "description": j.get("Description"),
+            disabled = _bool(j.get("scheduleenabled")) is False and _bool(j.get("scheduleconfigured")) is True
+            out.append({"id": jid, "name": j.get("name"), "type": j.get("jobtype"),
+                        "status": "running" if running else ("disabled" if disabled else "inactive"),
+                        "description": j.get("description") or None,
                         "lastResult": (s["result"]["result"] if s and not running else None),
                         "lastRun": s["creationTime"] if s else None})
         return out
+
+    async def org_quotas(self) -> list[dict[str, Any]]:
+        """Quotas de backup das organizações do vCloud Director (Veeam Cloud Director / orgConfigs)."""
+        if hasattr(self, "_orgs"):
+            return self._orgs
+        items: list[dict[str, Any]] = []
+        try:
+            items = _with_fields(await self.get("/api/vCloud/orgConfigs", format="Entity"), ORG_QUOTA_FIELDS)
+        except CollectorError as exc:
+            self.diag.append(f"orgConfigs: {str(exc)[:150]}")
+        if not items:
+            try:
+                q = await self.get("/api/query", type="VCloudOrganizationConfig", format="Entities", pageSize=1000)
+                items = _with_fields(q, ORG_QUOTA_FIELDS)
+            except CollectorError:
+                pass
+        rows = []
+        for it in items:
+            org = it.get("organizationname") or it.get("orgname") or it.get("name")
+            if not org:
+                continue
+            quota = (_num(it.get("quotagb")) or 0) * GB if it.get("quotagb") not in (None, "") \
+                else (_num(it.get("quotamb")) or 0) * 1024 ** 2
+            used_mb = it.get("usedquotamb") if it.get("usedquotamb") not in (None, "") else it.get("usedspacemb")
+            used = (_num(used_mb) or 0) * 1024 ** 2 if used_mb not in (None, "") \
+                else (_num(it.get("usedquotagb")) or 0) * GB
+            enabled = _bool(it.get("enabled") if it.get("enabled") not in (None, "") else it.get("isenabled"))
+            if enabled is None:
+                dis = _bool(it.get("disabled") if it.get("disabled") not in (None, "") else it.get("isdisabled"))
+                enabled = not dis if dis is not None else True
+            repo = it.get("repositoryfriendlyname") or it.get("repositoryname") or it.get("name") or org
+            rows.append({"id": _uid(it.get("uid")) or f"{org}/{repo}", "org": str(org), "repo": str(repo),
+                         "quota": quota, "used": used, "enabled": enabled})
+        self._orgs = rows
+        return rows
 
 
 async def connect(integ: Integration) -> _Base:
@@ -368,6 +545,7 @@ async def test(integ: Integration) -> dict[str, Any]:
             info = await api.server_info()
             njobs = await api.count("jobs")
             nrepos = await api.count("repositories")
+            norgs = len(await api.org_quotas())
     except CollectorError:
         raise
     except httpx.HTTPError as exc:
@@ -375,12 +553,16 @@ async def test(integ: Integration) -> dict[str, Any]:
     if api.api == "em":
         servers = info.get("servers") or []
         summary = (f"Enterprise Manager {integ.endpoint} · {len(servers)} servidor(es) de backup"
-                   f"{' (' + info['buildVersion'] + ')' if info.get('buildVersion') else ''} · {njobs} job(s)")
+                   f"{' (' + info['buildVersion'] + ')' if info.get('buildVersion') else ''} · {njobs} job(s)"
+                   f"{f' · {norgs} quota(s) de organização do vCloud' if norgs else ''}")
     else:
         summary = f"{info.get('name') or integ.endpoint} · Veeam {info.get('buildVersion', '')} · {njobs} job(s)"
     return {"ok": True, "summary": summary,
             "details": {"product": api.product, "api": api.api, "version": info.get("buildVersion"),
-                        "jobs": njobs, "repositories": nrepos}}
+                        "jobs": njobs, "repositories": nrepos,
+                        **({"organizations": norgs} if api.api == "em" else {}),
+                        # Nada encontrado: o formato que o Veeam devolveu, para ajustar o coletor
+                        **({"diagnostic": " | ".join(api.diag)[:1500]} if api.diag and not njobs else {})}}
 
 
 def _session_result(s: dict[str, Any]) -> str:
@@ -412,6 +594,7 @@ async def poll(integ: Integration, w: Writer) -> str:
                 "WHERE j.integration_id = $1 AND r.result = 'running' AND r.started_at < $2", integ.id, since)]
             sessions = await api.sessions(since, running_ids)
             jobs = await api.jobs(sessions)
+            orgs = await api.org_quotas()
     except CollectorError:
         raise
     except httpx.HTTPError as exc:
@@ -449,6 +632,29 @@ async def poll(integ: Integration, w: Writer) -> str:
         if used is None and cap is not None and free is not None:
             used = cap - free
         w.metric(aid, tid, "storage.used.bytes", used * GB if used is not None else None)
+
+    # Quotas de backup das organizações do vCloud (Enterprise Manager): um repositório por org/repositório,
+    # no tenant da regra de "pasta / organização"
+    org_items = []
+    for o in orgs:
+        tid = await w.tenant_for({"folder": [o["org"]], "name": o["org"]})
+        org_items.append({"external_id": f"vcdorg:{o['id']}", "asset_type": "backup_repository",
+                          "name": f"{o['org']} / {o['repo']}", "tenant_id": tid, "parent_id": sid,
+                          "status": "up" if o["enabled"] else "maintenance", "vendor": "Veeam",
+                          "model": "Quota vCloud Director",
+                          "attributes": {"org": o["org"], "repository": o["repo"], "folder": o["org"],
+                                         "capacity_bytes": int(o["quota"]), "free_bytes":
+                                         int(max(o["quota"] - o["used"], 0)), "used_bytes": int(o["used"])}})
+    org_ids = await w.assets_bulk(org_items) if org_items else {}
+    for o in orgs:
+        if f"vcdorg:{o['id']}" not in org_ids:
+            continue
+        aid, tid = org_ids[f"vcdorg:{o['id']}"]
+        w.metric(aid, tid, "availability.up", 1 if o["enabled"] else 0)
+        if o["quota"] > 0:
+            w.metric(aid, tid, "storage.capacity.bytes", o["quota"])
+            w.metric(aid, tid, "storage.free.bytes", max(o["quota"] - o["used"], 0))
+        w.metric(aid, tid, "storage.used.bytes", o["used"])
 
     job_ids: dict[str, tuple[int, int]] = {}
     for j in jobs:
@@ -522,5 +728,9 @@ async def poll(integ: Integration, w: Writer) -> str:
               AND (j.last_success_at IS NULL OR j.last_success_at < s.at)""", integ.id)
     failed = sum(1 for j in jobs if str(j.get("lastResult") or "").lower() == "failed")
     msg = f"{len(job_ids)} job(s), {len(runs)} sessão(ões), {len(repo_ids)} repositório(s)"
+    if org_ids:
+        msg += f", {len(org_ids)} quota(s) de organização do vCloud"
+    if not job_ids and not repo_ids and not org_ids and api.diag:
+        msg += f"; nada encontrado. Resposta do Veeam: {' | '.join(api.diag)}"[:1500]
     # Job falhando é assunto dos alertas e do SLA, não da saúde da integração
     return msg + (f"; {failed} job(s) com a última execução falhando" if failed else "")
