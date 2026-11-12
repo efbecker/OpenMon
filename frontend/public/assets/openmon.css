@@ -581,3 +581,5 @@ body.with-hero .auth-page { gap: 40px; flex-wrap: wrap; }
 .brand-pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
 .brand-pick input[type="file"] { flex: 1 1 240px; width: auto; }
 .mini-fill.lv-neutral { background: var(--muted); opacity: 0.6; }
+.prob-list li.clickable { cursor: pointer; }
+.prob-list li.clickable:hover strong { text-decoration: underline; }
