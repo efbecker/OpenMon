@@ -556,3 +556,27 @@ progress.meter-bar.crit::-moz-progress-bar { background: var(--danger); }
 /* Backups: vincular job/repositório a um tenant (admin) */
 .tenant-pick { max-width: 11rem; width: 100%; padding: 4px 6px; font-size: 0.85rem; }
 .tenant-pick + .btn { margin-top: 4px; }
+
+/* Branding: logo da empresa no cabeçalho e nos relatórios, banner na tela de login */
+.brand img.brand-logo { height: 32px; width: auto; max-width: 200px; object-fit: contain; }
+.rep-head img.brand-logo { height: 48px; width: auto; max-width: 220px; object-fit: contain; }
+body.with-hero .auth-page { gap: 40px; flex-wrap: wrap; }
+.auth-hero { flex: 1 1 420px; max-width: 640px; display: flex; align-items: center; justify-content: center; }
+.auth-hero img { width: 100%; max-height: 72vh; object-fit: contain; border-radius: 14px; }
+@media (max-width: 860px) {
+  body.with-hero .auth-page { flex-direction: column; gap: 20px; }
+  .auth-hero { flex: 0 0 auto; width: 100%; max-width: 420px; }
+  .auth-hero img { max-height: 200px; }
+}
+.brand-slots { display: flex; flex-direction: column; gap: 16px; }
+.brand-slot { border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: var(--panel-2);
+  display: flex; flex-direction: column; gap: 10px; }
+.brand-slot-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.brand-preview { display: flex; align-items: center; justify-content: center; min-height: 72px; padding: 12px;
+  border: 1px dashed var(--border-2); border-radius: 10px; background: #0d1424; }
+.brand-preview img { max-height: 64px; max-width: 100%; object-fit: contain; }
+.brand-preview-favicon { width: 88px; }
+.brand-preview-favicon img { width: 48px; height: 48px; }
+.brand-preview-banner img { max-height: 180px; }
+.brand-pick { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.brand-pick input[type="file"] { flex: 1 1 240px; width: auto; }
