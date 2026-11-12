@@ -105,6 +105,16 @@ def test_client_panel_consumption_and_growth(client, fake):
     assert client.get("/api/reports/overview").status_code == 422
     assert client.get(f"/api/reports/overview?tenant_id={pollux['id']}").json()["totals"]["vms"] == 199
 
+    # "nova" só para VMs criadas (data real da API) nos últimos 7 dias
+    assert not any(v["is_new"] for v in g["vms"])
+    recent = (now - timedelta(days=2)).isoformat()
+    sql("UPDATE assets SET attributes = jsonb_set(attributes, '{created_at}', to_jsonb(%s::text)) "
+        "WHERE name = 'vm-v1-198'", recent)
+    g3 = client.get(f"/api/reports/growth?tenant_id={pollux['id']}&start=2026-01-01").json()
+    assert [v["name"] for v in g3["vms"] if v["is_new"]] == ["vm-v1-198"]
+    ov3 = client.get(f"/api/reports/overview?tenant_id={pollux['id']}").json()
+    assert [v["name"] for v in ov3["vms"] if v["is_new"]] == ["vm-v1-198"]
+
 
 def test_finops_right_sizing(client, fake):
     csrf, provider, pollux, acme, integ = _setup(client)

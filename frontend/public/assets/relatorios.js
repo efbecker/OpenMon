@@ -57,7 +57,7 @@
     const on = v.status === "up";
     return el("tr", null,
       el("td", { cls: "mono", text: day(v[dateField]), title: v.created_estimated && dateField === "created_at" ? "Data em que o OpenMon viu a VM pela primeira vez" : "" }),
-      el("td", null, el("strong", { text: v.name }), v.new_in_period && dateField === "created_at" ? el("span", { cls: "tag tag-ok ml", text: "nova" }) : null),
+      el("td", null, el("strong", { text: v.name }), v.is_new && dateField === "created_at" ? el("span", { cls: "tag tag-ok ml", text: "nova", attrs: { title: "Criada nos últimos 7 dias" } }) : null),
       el("td", { cls: "small", text: v.os || "—", title: v.os || "" }),
       el("td", { cls: "mono", text: C.num(v.vcpu, 0) }),
       el("td", { cls: "mono", text: mem(v.memory_bytes) }),

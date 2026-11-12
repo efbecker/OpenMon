@@ -52,6 +52,14 @@ def _num(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
+NEW_VM_DAYS = 7
+
+
+def _is_new(created: datetime | None) -> bool:
+    """VM "nova": criada (data real informada pela API) nos últimos 7 dias. Data estimada nunca conta."""
+    return created is not None and created >= datetime.now(timezone.utc) - timedelta(days=NEW_VM_DAYS)
+
+
 def _parse_dt(v: Any) -> datetime | None:
     if not v:
         return None
@@ -249,7 +257,7 @@ async def overview(tenant_id: int | None = None,
             "memory_bytes": _num(a.get("memory_bytes")),
             "disk_bytes": _num(a.get("disk_bytes")) or m.get(DISK_CAP),
             "created_at": _iso(created or v["first_seen_at"]), "created_estimated": created is None,
-            "cpu_pct": m.get(CPU_PCT), "mem_pct": m.get(MEM_PCT), "vdc_id": v["parent_id"]})
+            "is_new": _is_new(created), "cpu_pct": m.get(CPU_PCT), "mem_pct": m.get(MEM_PCT), "vdc_id": v["parent_id"]})
 
     totals = {"vms": len(out_vms), "vms_on": sum(1 for v in out_vms if v["status"] == "up"),
               "vcpu": sum(v["vcpu"] or 0 for v in out_vms),
@@ -503,7 +511,8 @@ async def growth(tenant_id: int | None = None, start: str | None = Query(default
                 "power_state": v["power_state"], "vcpu": v["vcpu"], "memory_bytes": v["memory_bytes"],
                 "disk_bytes": v["disk_bytes"], "created_at": _iso(v["created"]),
                 "created_estimated": v["created_estimated"], "deleted_at": _iso(v["deleted"]),
-                "new_in_period": s <= v["created"] < e}
+                "new_in_period": s <= v["created"] < e,
+                "is_new": _is_new(None if v["created_estimated"] else v["created"])}
 
     alive_end = sorted((v for v in vms if v["created"] < e and (v["deleted"] is None or v["deleted"] >= e)),
                        key=lambda v: v["created"], reverse=True)
