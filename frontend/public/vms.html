@@ -20,7 +20,7 @@
         <a href="/painel.html">Painel</a>
         <a href="/relatorios.html">Relatórios</a>
         <a href="/alertas.html">Alertas</a>
-        <a href="/inventario.html">Inventário</a>
+        <a href="/inventario.html" data-nav="global">Inventário</a>
         <a href="/vms.html" class="active" aria-current="page">VMs</a>
         <a href="/backups.html">Backups</a>
         <a href="/integracoes.html" data-nav="global">Integrações</a>
@@ -86,6 +86,10 @@
         <select class="filter" id="filter-state" aria-label="Filtrar por situação">
           <option value="">Todas</option><option value="on">Ligadas</option><option value="off">Desligadas</option>
           <option value="attention">Em atenção</option>
+        </select>
+        <select class="filter" id="filter-os" aria-label="Filtrar por sistema">
+          <option value="">Todos os sistemas</option><option value="Windows">Windows</option><option value="Linux">Linux</option>
+          <option value="Outro">Outros</option><option value="—">Não informado</option>
         </select>
         <input class="filter" id="filter-q" type="search" maxlength="100" placeholder="Nome ou IP" aria-label="Buscar">
         <div class="seg" role="group" aria-label="Visualização">

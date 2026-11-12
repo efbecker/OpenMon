@@ -127,7 +127,9 @@
 
   function filtered() {
     const st = $("filter-state").value;
+    const os = $("filter-os").value;
     const list = rows.filter((a) => {
+      if (os && osKind(a) !== os) return false;
       if (!st) return true;
       if (st === "attention") return ["warn", "crit"].includes(health(a)[0]);
       return (st === "on") === vmValues(a).on;
@@ -209,12 +211,15 @@
   function card(a) {
     const v = vmValues(a);
     const [h, why] = health(a);
-    const sub = h === "ok" || h === "nodata"
-      ? [shortOs(a), v.uptime !== undefined ? `up ${duration(v.uptime)}` : ""].filter(Boolean).join(" · ") || why
-      : why;
-    const c = el("button", { cls: `vm-card ${HEALTH[h][1]}`, attrs: { type: "button", title: `${a.name}: ${HEALTH[h][0]}${why ? " · " + why : ""}` } },
+    const fine = h === "ok" || h === "nodata";
+    const sub = fine ? (v.uptime !== undefined ? `ligada há ${duration(v.uptime)}` : why) : why;
+    const kind = osKind(a);
+    const os = shortOs(a);
+    const c = el("button", { cls: `vm-card ${HEALTH[h][1]}`, attrs: { type: "button", title: `${a.name}: ${HEALTH[h][0]}${why ? " · " + why : ""}${os ? " · " + os : ""}` } },
       el("div", { cls: "vm-name" }, el("i", { cls: "dot" }), el("span", { text: a.name })),
-      el("div", { cls: "vm-sub" + (h === "ok" || h === "nodata" ? "" : " why"), text: sub }),
+      el("div", { cls: "vm-os" }, el("span", { cls: "os-badge os-" + kind.toLowerCase().replace("—", "none"), text: kind === "—" ? "?" : kind }),
+        el("span", { cls: "vm-os-name", text: os || "sistema não informado" })),
+      el("div", { cls: "vm-sub" + (fine ? "" : " why"), text: sub || "" }),
       el("div", { cls: "vm-minis" }, mini("CPU", v.cpu, "cpu"), mini("MEM", v.mempct, "mem"), mini("DISCO", v.disk, "disk")));
     c.addEventListener("click", () => openDetail(a.id, true));
     return c;
@@ -328,7 +333,7 @@
       const v = vmValues(a);
       const at = a.attributes || {};
       const where = [isGlobal ? ORIGIN[at.hypervisor] : "", at.vdc || (isGlobal ? at.cluster || a.parent_name : "")].filter(Boolean).join(" · ");
-      const name = el("td", null, el("strong", { text: a.name }), el("div", { cls: "muted small", text: [where, a.ip].filter(Boolean).join(" · ") }));
+      const name = el("td", null, el("strong", { text: a.name }), el("div", { cls: "muted small", text: [shortOs(a), where, a.ip].filter(Boolean).join(" · ") }));
       const l = a.latest || {};
       const disk = v.disk !== undefined ? pct(Math.round(v.disk)) + (l.disk_capacity ? ` · ${bytes(l.disk_capacity)}` : "")
         : l.disk_capacity ? bytes(l.disk_capacity) : "—";
@@ -420,6 +425,7 @@
     $("view-table").classList.toggle("on", v === "table");
     $("view-cards").setAttribute("aria-pressed", String(v === "cards"));
     $("view-table").setAttribute("aria-pressed", String(v === "table"));
+    document.querySelector(".fleet-grid").classList.toggle("as-table", v === "table");
     try { localStorage.setItem("openmon.vms.view", v); } catch (_) { /* sem armazenamento */ }
     if (rerender) render();
   }
@@ -622,6 +628,7 @@
   }));
   $("filter-tenant").addEventListener("change", load);
   $("filter-state").addEventListener("change", render);
+  $("filter-os").addEventListener("change", render);
   $("filter-q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(load, 300); });
 
   (async function () {
