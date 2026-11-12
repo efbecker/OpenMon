@@ -612,3 +612,39 @@ body.with-hero .auth-page { gap: 40px; flex-wrap: wrap; }
   .ai-box strong { color: #1d4ed8; }
 }
 #f-table td:last-child { text-align: left; white-space: normal; }
+
+/* ---------- Painel de VMs: dois cards embaixo e modo Tela cheia (NOC, 1920x1080 sem rolagem) ---------- */
+.fleet-bottom { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fleet-actions { display: flex; align-items: center; gap: 10px; }
+.vm-card[hidden] { display: none; }
+.noc-page { margin: 0 0 8px; text-align: right; }
+
+body.noc { overflow: hidden; }
+body.noc .topbar, body.noc .fleet-filters, body.noc #detail { display: none !important; }
+body.noc .page.wide.xwide { max-width: none; margin: 0; padding: 14px 18px; height: 100vh; box-sizing: border-box; }
+body.noc #list-card.fleet {
+  height: 100%; display: grid; gap: 12px 14px;
+  grid-template-columns: minmax(0, 1fr) 460px;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "head head" "kpis kpis" "main rank" "main vols" "main os";
+}
+body.noc .fleet-grid, body.noc .fleet-bottom { display: contents; }
+body.noc .fleet-head { grid-area: head; align-items: center; }
+body.noc .fleet-title { font-size: 26px; margin-top: 2px; }
+body.noc .eyebrow { font-size: 11px; }
+body.noc .kpis { grid-area: kpis; gap: 12px; }
+body.noc .kpi { padding: 10px 14px; }
+body.noc .kpi-v { font-size: 26px; margin-top: 2px; }
+body.noc .fleet-main { grid-area: main; min-height: 0; display: flex; flex-direction: column; }
+body.noc .fleet-main .vm-cards { flex: 1; min-height: 0; overflow: hidden; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+body.noc .fleet-main .health-bar { margin: 10px 0 12px; }
+body.noc .fleet-side-card { grid-area: rank; }
+body.noc .fleet-side-card .rank li { padding: 3px 0; }
+body.noc #vol-card { grid-area: vols; min-height: 0; overflow: hidden; }
+body.noc #os-card { grid-area: os; }
+body.noc .card { padding: 14px 16px; }
+body.noc #error, body.noc #list-error { display: none; }
+body.noc .fleet-side-card .rank li:nth-child(n+4) { display: none; }
+body.noc .fleet-main .vm-cards { grid-auto-rows: max-content; }
+body.noc .os-row span { white-space: nowrap; }

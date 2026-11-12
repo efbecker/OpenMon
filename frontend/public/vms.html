@@ -78,7 +78,10 @@
           <h1 class="fleet-title" id="f-title">Servidores</h1>
         </div>
         <div class="fleet-side">
-          <span class="health-pill" id="f-health" hidden></span>
+          <div class="fleet-actions">
+            <span class="health-pill" id="f-health" hidden></span>
+            <button type="button" class="btn ghost small-btn" id="btn-noc" title="Abrir o painel em tela cheia (telão do NOC)">⤢ Tela cheia (NOC)</button>
+          </div>
           <span class="muted small" id="f-updated"></span>
         </div>
       </section>
@@ -108,6 +111,7 @@
             <div class="fleet-legend" id="f-legend"></div>
           </div>
           <div class="health-bar" id="f-bar"></div>
+          <p class="noc-page muted small" id="noc-page" hidden></p>
           <div class="vm-cards" id="cards"></div>
           <div class="table-wrap" id="table-box" hidden>
             <table class="table" id="table">
@@ -136,16 +140,12 @@
       </div>
 
       <div class="fleet-bottom">
-        <section class="card">
-          <div class="panel-head"><h2>Problemas ativos</h2><span class="muted small">severidade · duração</span></div>
-          <div id="problems"></div>
-        </section>
-        <section class="card">
+        <section class="card" id="vol-card">
           <div class="panel-head"><h2>Discos com menos espaço <span class="count" id="vol-count"></span></h2>
             <span class="muted small">limites <span class="warn-text">90%</span> · <span class="bad">97%</span></span></div>
           <div id="volumes"></div>
         </section>
-        <section class="card">
+        <section class="card" id="os-card">
           <div class="panel-head"><h2>Sistemas e uptime</h2><span class="muted small" id="os-common"></span></div>
           <div class="os-box" id="os"></div>
         </section>
