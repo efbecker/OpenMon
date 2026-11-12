@@ -195,11 +195,13 @@
     const td = top(list, "disk", 1)[0];
     const tn = top(on, "net", 1)[0];
     const net = on.reduce((s, a) => s + (vmValues(a).net || 0), 0);
-    const open = problems.length;
+    const iss = issues(list);
+    const open = iss.length;
     const off = hs.filter((h) => h === "off").length;
     $("kpis").replaceChildren(
       kpi("Servidores online", `${on.length} / ${list.length}`, off ? `${off} desligado${off > 1 ? "s" : ""}` : "todos ligados", off ? "k-bad" : "k-ok"),
-      kpi("Problemas ativos", String(open), open ? (problems[0].asset_name || problems[0].message || "") : "Nenhum problema em aberto", open ? "k-warn" : "k-ok"),
+      kpi("Problemas ativos", String(open), open ? iss[0].a.name : "Nenhum problema em aberto",
+        !open ? "k-ok" : SEV_RANK[iss[0].sev] <= 1 ? "k-bad" : "k-warn"),
       kpi("CPU média da frota", pct(Math.round(avg(on.map((a) => vmValues(a).cpu)) ?? NaN) || 0), tc ? `Pico: ${tc[0].name} (${pct(Math.round(tc[1]))})` : "", "k-info"),
       kpi("Memória média da frota", pct(Math.round(avg(on.map((a) => vmValues(a).mempct)) ?? NaN) || 0), tm ? `Pico: ${tm[0].name} (${pct(Math.round(tm[1]))})` : "", "k-info"),
       kpi("Disco mais ocupado", td ? pct(Math.round(td[1])) : "—", td ? td[0].name : "sem leitura de disco", td ? (td[1] >= CRIT.disk ? "k-bad" : td[1] >= WARN.disk ? "k-warn" : "k-ok") : ""),
@@ -245,18 +247,63 @@
     if (!items.length) $(id).replaceChildren(el("li", { cls: "muted small", text: "Sem leituras." }));
   }
 
-  function renderProblems() {
-    if (!problems.length) {
+  // Problemas ativos = alertas abertos + o que a leitura atual já mostra acima dos limites da tela
+  // (volume do sistema, CPU e memória). Assim o card nunca diz "nenhum problema" com um disco em vermelho,
+  // mesmo antes de o alerta abrir (ele confirma na janela de avaliação) ou se o alerta estiver desligado.
+  const SEV_RANK = { disaster: 0, high: 1, average: 2, warning: 3, info: 4 };
+  function kindOf(text) {
+    return /volume|disco|disk/i.test(text) ? "disk" : /cpu/i.test(text) ? "cpu" : /mem/i.test(text) ? "mem" : "other";
+  }
+
+  function issues(list) {
+    const byId = new Map(list.map((a) => [a.id, a]));
+    const out = [];
+    const has = new Set();
+    problems.forEach((p) => {
+      const a = byId.get(p.asset_id);
+      if (!a) return;
+      const kind = kindOf(`${p.trigger_name || ""} ${p.message || ""}`);
+      has.add(`${a.id}:${kind}`);
+      const mins = Math.max(0, Math.round((Date.now() - Date.parse(p.opened_at)) / 60000));
+      out.push({ a, sev: p.severity, text: p.message || p.trigger_name || "Problema ativo", score: 1000,
+        when: mins >= 1440 ? `${Math.floor(mins / 1440)}d` : mins >= 60 ? `${Math.floor(mins / 60)}h` : `${mins} min` });
+    });
+    const add = (a, kind, sev, text, score) => {
+      if (has.has(`${a.id}:${kind}`)) return;
+      out.push({ a, sev, text, score, when: "agora" });
+    };
+    list.forEach((a) => {
+      const v = vmValues(a);
+      const vols = (a.attributes || {}).volumes || [];
+      if (vols.length) {
+        vols.forEach((x) => {
+          const p = (100 * (x.cap - x.free)) / x.cap;
+          if (p >= WARN.disk) add(a, "disk", p >= CRIT.disk ? "high" : "average",
+            `Volume ${x.path} com ${pct(Math.round(p))} usado · livre ${bytes(x.free)}`, p);
+        });
+      } else if (v.disk !== undefined && v.disk >= WARN.disk) {
+        add(a, "disk", v.disk >= CRIT.disk ? "high" : "average", `Volume mais cheio com ${pct(Math.round(v.disk))} usado`, v.disk);
+      }
+      if (v.cpu !== undefined && v.cpu >= WARN.cpu) add(a, "cpu", v.cpu >= CRIT.cpu ? "high" : "warning", `CPU em ${pct(Math.round(v.cpu))}`, v.cpu);
+      if (v.mempct !== undefined && v.mempct >= WARN.mem) add(a, "mem", v.mempct >= CRIT.mem ? "high" : "warning", `Memória em ${pct(Math.round(v.mempct))}`, v.mempct);
+    });
+    return out.sort((x, y) => (SEV_RANK[x.sev] ?? 9) - (SEV_RANK[y.sev] ?? 9) || y.score - x.score);
+  }
+
+  function renderProblems(items) {
+    if (!items.length) {
       $("problems").replaceChildren(el("div", { cls: "empty-ok" }, el("div", { cls: "ok-text", text: "✓ Nenhum problema em aberto" }),
-        el("div", { cls: "muted small", text: "Todos os alertas das suas VMs estão normais." })));
+        el("div", { cls: "muted small", text: "Nenhum alerta aberto e nenhuma VM acima dos limites agora." })));
       return;
     }
-    $("problems").replaceChildren(el("ul", { cls: "prob-list" }, ...problems.slice(0, 8).map((p) => {
-      const mins = Math.max(0, Math.round((Date.now() - Date.parse(p.opened_at)) / 60000));
-      return el("li", null, el("span", { cls: "tag sev-" + p.severity, text: SEV[p.severity] || p.severity }),
-        el("div", null, el("strong", { text: p.asset_name || "" }), el("div", { cls: "muted small", text: p.message || "" })),
-        el("span", { cls: "muted small", text: mins >= 1440 ? `${Math.floor(mins / 1440)}d` : mins >= 60 ? `${Math.floor(mins / 60)}h` : `${mins} min` }));
-    })));
+    const shown = items.slice(0, 8);
+    $("problems").replaceChildren(el("ul", { cls: "prob-list" }, ...shown.map((p) => {
+      const li = el("li", { cls: "clickable" }, el("span", { cls: "tag sev-" + p.sev, text: SEV[p.sev] || p.sev }),
+        el("div", null, el("strong", { text: p.a.name }), el("div", { cls: "muted small", text: p.text })),
+        el("span", { cls: "muted small", text: p.when, title: p.when === "agora" ? "Leitura atual" : "Alerta aberto há" }));
+      li.addEventListener("click", () => openDetail(p.a.id, true));
+      return li;
+    })), items.length > shown.length ? el("p", { cls: "muted small center", text: `+${items.length - shown.length} abaixo` }) : "");
   }
 
   function renderVolumes(list) {
@@ -395,7 +442,7 @@
     const on = list.filter((a) => vmValues(a).on);
     rank("top-cpu", top(on, "cpu", 5), "cpu");
     rank("top-mem", top(on, "mempct", 5), "mem");
-    renderProblems();
+    renderProblems(issues(list));
     renderVolumes(list);
     renderOs(list);
   }
