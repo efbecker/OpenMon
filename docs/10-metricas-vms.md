@@ -136,6 +136,9 @@ pasta, MoRef, provider VDC, nome do vCenter, `external_id` e a integração de o
   ativos; discos com menos espaço (limites 90 e 97 %); sistemas operacionais e uptime. Atualiza a cada minuto.
 * Visualização em tabela com ordenação por coluna, filtro por situação (inclusive "em atenção") e busca.
 * O detalhe da VM mostra os volumes do sistema e os gráficos.
+* Cada card mostra o tipo de sistema (Windows, Linux, outro) e o nome curto; há filtro por sistema.
+* Para o cliente, a tela VMs substitui o Inventário (o menu Inventário só aparece para o provedor) e o Painel
+  mostra só o contratado x em uso e o consumo no período.
 * **Gráficos**: períodos de 1 hora a 1 ano ou datas escolhidas; CPU e memória (média e pico), disco
   usado x provisionado, volume mais cheio, espaço nos volumes, leitura/escrita em disco, IOPS, rede recebida/enviada, CPU Ready. O endereço
   guarda a VM e o período (`/vms.html?id=42&period=7d`) para compartilhar o link.

@@ -1,4 +1,4 @@
-// OpenMon - painel do cliente: contratado x em uso, consumo no período e VMs. Sem innerHTML (CSP estrita).
+// OpenMon - painel do cliente: contratado x em uso, consumo no período (as VMs ficam na tela VMs). Sem innerHTML (CSP estrita).
 "use strict";
 
 (function () {
@@ -45,51 +45,6 @@
       stat("Disco das VMs", C.bytes(t.disk_bytes)),
       stat("Atualizado", new Date(o.generated_at).toLocaleString("pt-BR")));
 
-    $("vdc-card").hidden = !o.vdcs.length;
-    const rows = [];
-    o.vdcs.forEach((d) => {
-      const cell = (pct, used, cap) => el("td", null, el("div", { text: cap ? `${used} de ${cap}` : used }),
-        el("div", { cls: "muted small", text: pct === null || pct === undefined ? "" : C.pct(pct, 1) }));
-      rows.push(el("tr", null,
-        el("td", null, el("strong", { text: d.vdc }), el("div", { cls: "muted small", text: [d.org, d.allocation_model].filter(Boolean).join(" · ") })),
-        cell(d.cpu.pct, C.ghz(d.cpu.used_mhz), d.cpu.allocated_mhz ? C.ghz(d.cpu.allocated_mhz) : null),
-        cell(d.memory.pct, C.bytes(d.memory.used_bytes), d.memory.allocated_bytes ? C.bytes(d.memory.allocated_bytes) : null),
-        cell(d.storage.pct, C.bytes(d.storage.used_bytes), d.storage.limit_bytes ? C.bytes(d.storage.limit_bytes) : null),
-        el("td", { cls: "mono", text: `${d.vms_on} de ${d.vms}` })));
-      d.storage_profiles.forEach((p) => rows.push(el("tr", { cls: "sub-row" },
-        el("td", { text: `Perfil ${p.name}${p.default ? " (padrão)" : ""}` }), el("td"), el("td"),
-        el("td", null, el("div", { text: p.limit_bytes ? `${C.bytes(p.used_bytes)} de ${C.bytes(p.limit_bytes)}` : `${C.bytes(p.used_bytes)} · sem limite` }),
-          el("div", { cls: "muted small", text: p.pct === null ? "" : C.pct(p.pct, 1) })),
-        el("td"))));
-    });
-    $("vdcs").tBodies[0].replaceChildren(...rows);
-    renderVms();
-  }
-
-  function renderVms() {
-    const o = state.overview;
-    if (!o) return;
-    const q = $("vm-q").value.trim().toLowerCase();
-    const list = o.vms.filter((v) => !q || v.name.toLowerCase().includes(q) || (v.os || "").toLowerCase().includes(q));
-    $("vm-count").textContent = `(${o.vms.length})`;
-    $("vm-empty").hidden = list.length > 0;
-    const shown = state.allVms ? list : list.slice(0, 100);
-    $("vm-more").hidden = shown.length === list.length;
-    $("vm-more").textContent = `Mostrar todas as ${list.length}`;
-    $("vms").tBodies[0].replaceChildren(...shown.map((v) => {
-      const on = v.status === "up";
-      return el("tr", null,
-        el("td", null, el("strong", { text: v.name })),
-        el("td", { cls: "small", text: v.os || "—", title: v.os || "" }),
-        el("td", { cls: "mono", text: C.num(v.vcpu, 0) }),
-        el("td", { cls: "mono", text: C.bytes(v.memory_bytes) }),
-        el("td", { cls: "mono", text: C.bytes(v.disk_bytes) }),
-        el("td", { cls: "mono", text: C.pct(v.cpu_pct) }),
-        el("td", { cls: "mono", text: C.pct(v.mem_pct) }),
-        el("td", { cls: "mono", text: new Date(v.created_at).toLocaleDateString("pt-BR"),
-          title: v.created_estimated ? "Data em que o OpenMon viu a VM pela primeira vez" : "" }),
-        el("td", null, el("span", { cls: "tag " + (on ? "tag-ok" : "tag-off"), text: on ? "Ligada" : "Desligada" })));
-    }));
   }
 
   function statLine(box, items) {
@@ -131,12 +86,6 @@
       statLine("st-sto", [["Atual", C.bytes(s.last)], ["Variação", C.signed(first === undefined ? null : s.last - first, (v) => C.bytes(v))],
         ["Limite", c.storage.allocated_last ? C.bytes(c.storage.allocated_last) : "sem limite"]]);
     }
-    const top = c.top_vms || { cpu: [], memory: [] };
-    $("top-card").hidden = !top.cpu.length && !top.memory.length;
-    const rows = (list) => list.map((v) => el("tr", null, el("td", { text: v.name }),
-      el("td", { cls: "mono", text: C.pct(v.avg, 1) }), el("td", { cls: "mono", text: C.pct(v.peak, 1) })));
-    $("top-cpu").tBodies[0].replaceChildren(...rows(top.cpu));
-    $("top-mem").tBodies[0].replaceChildren(...rows(top.memory));
   }
 
   async function load() {
@@ -183,8 +132,6 @@
       state.days = Number(b.getAttribute("data-days"));
       load();
     }));
-    $("vm-q").addEventListener("input", renderVms);
-    $("vm-more").addEventListener("click", () => { state.allVms = true; renderVms(); });
     $("main").hidden = false;
     if (!state.tenant) { showError("error", "Nenhum cliente disponível para o seu usuário."); return; }
     load();
