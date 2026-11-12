@@ -24,7 +24,27 @@ router = APIRouter(prefix="/api", tags=["assets"])
 
 LATEST = {1: "cpu_pct", 10: "mem_pct", 11: "mem_used", 20: "disk_capacity", 21: "disk_used", 26: "disk_read_bps",
           27: "disk_write_bps", 30: "net_rx_bps", 31: "net_tx_bps", 40: "up", 41: "uptime_s",
-          50: "storage_capacity", 51: "storage_free"}
+          50: "storage_capacity", 51: "storage_free", 60: "fs_capacity", 61: "fs_used", 62: "fs_max_pct"}
+# Detalhes da infraestrutura do provedor que o cliente não vê: host ESXi/Hyper-V, cluster, MoRef, pastas...
+INFRA_ATTRS = frozenset({"host", "cluster", "esx_host", "moref", "resource_pool", "folder", "provider_vdc",
+                         "instance_uuid", "vc_name", "connection_state"})
+
+
+def _hide_infra(item: dict[str, Any], session: SessionInfo) -> dict[str, Any]:
+    """Visão do cliente: tira host do virtualizador, cluster e identificadores internos do provedor."""
+    if session.is_global:
+        return item
+    attrs = item.get("attributes") or {}
+    for k in INFRA_ATTRS:
+        attrs.pop(k, None)
+    if item.get("asset_type") == "vm":
+        # vCloud: o "hostName" da VM é o host ESXi; vCenter/Hyper-V: o pai é o host
+        if attrs.get("hypervisor") == "vcloud":
+            item["hostname"] = None
+        item.pop("external_id", None)
+    for k in ("integration_name", "integration_id"):
+        item.pop(k, None)
+    return item
 
 
 def _json(v: Any) -> dict[str, Any]:
@@ -92,8 +112,9 @@ async def list_assets(tenant_id: int | None = None, integration_id: int | None =
                     "attributes": {k: attrs[k] for k in ("vcpu", "memory_bytes", "guest_os", "power_state",
                                                          "sys_descr", "location", "capacity_bytes", "free_bytes",
                                                          "hypervisor", "org", "vdc", "vapp", "cluster", "host",
-                                                         "folder")
+                                                         "folder", "volumes", "created_at")
                                    if k in attrs}})
+        _hide_infra(out[-1], session)
     summary: dict[str, dict[str, int]] = {}
     for c in counts:
         summary.setdefault(c["asset_type"], {})[c["status"]] = c["n"]
@@ -147,6 +168,7 @@ async def get_asset(asset_id: int, session: SessionInfo = Depends(require_permis
     asset["attributes"] = _json(a["attributes"])
     asset["children"] = children
     asset["latest"] = latest.get(asset_id, {})
+    _hide_infra(asset, session)
     return {"asset": asset, "interfaces": [{k: _iso(r[k]) for k in r.keys()} for r in ifs],
             "can_manage": session.can("integrations.manage")}
 

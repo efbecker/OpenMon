@@ -20,7 +20,7 @@ METRIC = {
     "disk.write.latency.ms": 23, "disk.read.iops": 24, "disk.write.iops": 25, "disk.read.bps": 26,
     "disk.write.bps": 27, "net.rx.bps": 30, "net.tx.bps": 31, "net.rx.pps": 32, "net.tx.pps": 33,
     "availability.up": 40, "host.uptime.seconds": 41, "storage.capacity.bytes": 50, "storage.free.bytes": 51,
-    "storage.used.bytes": 52,
+    "storage.used.bytes": 52, "fs.capacity.bytes": 60, "fs.used.bytes": 61, "fs.max.pct": 62,
 }
 
 

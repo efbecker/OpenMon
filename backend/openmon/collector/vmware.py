@@ -8,11 +8,21 @@ PerfManager em tempo real (amostras de 20 s), com várias VMs por chamada.
 O pyvmomi é síncrono: a coleta roda numa thread (``asyncio.to_thread``) e a
 gravação no banco volta para o loop. A sessão do vCenter é reaproveitada entre
 coletas (login a cada minuto enche o vCenter de sessões) e refeita se cair.
+
+Espaço em disco do sistema convidado (``guest.disk``, pelo VMware Tools): cada volume
+(C:, F:, /, /var...) com tamanho e livre vai para ``attributes.volumes``, e as somas e o
+volume mais cheio para as métricas ``fs.*``.
+
+VMs do vCloud: se uma VM daqui já existe como ativo de uma integração vCloud (mesmo MoRef),
+o vCenter não cria outro ativo; só completa o do vCloud com o que o vCD não entrega (volumes
+do convidado, disco usado no datastore, rede, CPU ready, IOPS, uptime). Desligue com
+``options.vcd_merge = false``.
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import ssl
 import threading
@@ -31,7 +41,7 @@ VM_PROPS = ["name", "config.instanceUuid", "config.template", "config.guestFullN
             "summary.quickStats.guestMemoryUsage", "summary.quickStats.uptimeSeconds",
             "summary.quickStats.swappedMemory", "summary.quickStats.balloonedMemory", "summary.runtime.maxCpuUsage",
             "summary.storage.committed", "summary.storage.uncommitted", "parent", "resourcePool",
-            "summary.overallStatus"]
+            "summary.overallStatus", "guest.disk"]
 HOST_PROPS = ["name", "parent", "runtime.connectionState", "runtime.powerState", "runtime.inMaintenanceMode",
               "summary.hardware.vendor", "summary.hardware.model", "summary.hardware.cpuMhz",
               "summary.hardware.numCpuCores", "summary.hardware.memorySize", "summary.quickStats.overallCpuUsage",
@@ -270,6 +280,7 @@ def collect(integ: Integration) -> dict[str, Any]:
         d["summary.overallStatus"] = str(v.get("summary.overallStatus") or "")
         d["folder"] = _path(d["parent"], folders, set(dcs))
         d["perf"] = perf.get(m, {})
+        d["guest.disk"] = _volumes(v.get("guest.disk"))
         out_vms[m] = d
     out_ds = {}
     for m, ds in dss.items():
@@ -280,6 +291,46 @@ def collect(integ: Integration) -> dict[str, Any]:
                       "uuid": about.instanceUuid, "api": about.apiVersion},
             "datacenters": {m: {"name": d.get("name")} for m, d in dcs.items()},
             "clusters": out_clusters, "pools": out_pools, "hosts": out_hosts, "vms": out_vms, "datastores": out_ds}
+
+
+def _volumes(disks: Any) -> list[dict[str, Any]]:
+    """GuestDiskInfo[] -> [{"path", "cap", "free", "fs"}] (só volumes com tamanho; no máximo 40)."""
+    out = []
+    for g in disks or []:
+        try:
+            cap, free = int(getattr(g, "capacity", 0) or 0), int(getattr(g, "freeSpace", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if cap <= 0:
+            continue
+        out.append({"path": str(getattr(g, "diskPath", "") or "?")[:120], "cap": cap, "free": max(0, min(free, cap)),
+                    "fs": getattr(g, "filesystemType", None)})
+    out.sort(key=lambda x: x["path"])
+    return out[:40]
+
+
+def fs_metrics(w: Writer, aid: int, tid: int, volumes: list[dict[str, Any]]) -> None:
+    """Somas e o volume mais cheio do sistema convidado."""
+    if not volumes:
+        return
+    cap = sum(v["cap"] for v in volumes)
+    used = sum(v["cap"] - v["free"] for v in volumes)
+    w.metric(aid, tid, "fs.capacity.bytes", cap)
+    w.metric(aid, tid, "fs.used.bytes", used)
+    w.metric(aid, tid, "fs.max.pct", round(max(100.0 * (v["cap"] - v["free"]) / v["cap"] for v in volumes), 2))
+
+
+async def _vcd_twins(w: Writer, morefs: list[str]) -> dict[str, tuple[int, int]]:
+    """MoRef -> (ativo, tenant) das VMs que já existem numa integração vCloud (só quando o MoRef é único)."""
+    if not morefs:
+        return {}
+    rows = await w.conn.fetch(
+        """SELECT attributes->>'moref' AS moref, min(id) AS id, min(tenant_id) AS tenant_id, count(*) AS n
+             FROM assets
+            WHERE asset_type = 'vm' AND deleted_at IS NULL AND attributes->>'hypervisor' = 'vcloud'
+              AND attributes->>'moref' = ANY($1::text[])
+            GROUP BY 1""", morefs)
+    return {r["moref"]: (r["id"], r["tenant_id"]) for r in rows if r["n"] == 1}
 
 
 def _pool_chain(moid: str | None, pools: dict[str, dict[str, Any]]) -> list[str]:
@@ -398,8 +449,11 @@ async def poll(integ: Integration, w: Writer) -> str:
             w.metric(aid, tid, "storage.used.bytes", cap - free)
 
     host_cluster = {m: data["clusters"].get(h["parent"], {}).get("name") for m, h in data["hosts"].items()}
+    twins = await _vcd_twins(w, list(data["vms"])) if (integ.options or {}).get("vcd_merge") is not False else {}
     vm_items = []
     for m, v in data["vms"].items():
+        if m in twins:
+            continue
         cluster = host_cluster.get(v["runtime.host"] or "")
         facts = {"name": v.get("name") or "", "folder": ["/".join(v["folder"])] + v["folder"],
                  "resource_pool": _pool_chain(v["resourcePool"], data["pools"]), "cluster": cluster}
@@ -419,11 +473,19 @@ async def poll(integ: Integration, w: Writer) -> str:
                                         "power_state": v["runtime.powerState"],
                                         "instance_uuid": v.get("config.instanceUuid"),
                                         "folder": "/".join(v["folder"]), "cluster": cluster,
-                                        "resource_pool": "/".join(facts["resource_pool"]), "hypervisor": "vmware"}})
+                                        "resource_pool": "/".join(facts["resource_pool"]), "hypervisor": "vmware",
+                                        "volumes": v["guest.disk"]}})
     vm_ids = await w.assets_bulk(vm_items)
     on = 0
+    twin_attrs = []
     for m, v in data["vms"].items():
+        if m in twins:
+            on += _complete_vcd_twin(w, twins[m], v)
+            if v["guest.disk"]:
+                twin_attrs.append((twins[m][0], json.dumps({"volumes": v["guest.disk"]})))
+            continue
         aid, tid = vm_ids[m]
+        fs_metrics(w, aid, tid, v["guest.disk"])
         vcpu = v.get("summary.config.numCpu") or 0
         mem = (v.get("summary.config.memorySizeMB") or 0) * 1024 * 1024
         w.metric(aid, tid, "cpu.allocated.vcpu", vcpu)
@@ -450,10 +512,31 @@ async def poll(integ: Integration, w: Writer) -> str:
         w.metric(aid, tid, "host.uptime.seconds", v.get("summary.quickStats.uptimeSeconds"))
         _perf_metrics(w, aid, tid, v["perf"], vcpu)
 
+    if twin_attrs:
+        await w.conn.executemany("UPDATE assets SET attributes = attributes || $2::jsonb, updated_at = now() "
+                                 "WHERE id = $1", twin_attrs)
     removed = await w.retire_missing(("datacenter", "cluster", "hypervisor_host", "vm", "datastore"))
-    msg = (f"{len(data['hosts'])} host(s), {len(vm_ids)} VM(s) ({on} ligada(s)), {len(ds_ids)} datastore(s)"
+    msg = (f"{len(data['hosts'])} host(s), {len(vm_ids) + len(twins)} VM(s) ({on} ligada(s)"
+           + (f", {len(twins)} completando o vCloud" if twins else "") + f"), {len(ds_ids)} datastore(s)"
            + (f", {removed} removido(s) do inventário" if removed else ""))
     return msg
+
+
+# O vCD já grava CPU, memória e leitura/escrita; o vCenter completa só o resto
+TWIN_PERF_SKIP = {"disk.read.average", "disk.write.average"}
+
+
+def _complete_vcd_twin(w: Writer, twin: tuple[int, int], v: dict[str, Any]) -> int:
+    """Grava no ativo do vCloud o que só o vCenter sabe. Devolve 1 se a VM está ligada."""
+    aid, tid = twin
+    w.metric(aid, tid, "disk.used.bytes", v.get("summary.storage.committed"))
+    fs_metrics(w, aid, tid, v["guest.disk"])
+    if v["runtime.powerState"] != "poweredOn":
+        return 0
+    w.metric(aid, tid, "host.uptime.seconds", v.get("summary.quickStats.uptimeSeconds"))
+    perf = {k: x for k, x in v["perf"].items() if k not in TWIN_PERF_SKIP}
+    _perf_metrics(w, aid, tid, perf, v.get("summary.config.numCpu") or 0)
+    return 1
 
 
 def _perf_metrics(w: Writer, aid: int, tid: int, perf: dict[str, float], vcpu: int) -> None:

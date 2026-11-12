@@ -22,6 +22,8 @@ Uma amostra por coleta (o intervalo da integração, 60 s por padrão), na hyper
 | `disk.read.iops` / `disk.write.iops` | 24 / 25 | IOPS | PerfManager | — | — |
 | `disk.read.bps` / `disk.write.bps` | 26 / 27 | B/s | PerfManager | `disk.read/write.average` | — |
 | `net.rx.bps` / `net.tx.bps` | 30 / 31 | bit/s | PerfManager | quando o vCD expõe | contador do adaptador virtual |
+| `fs.capacity.bytes` / `fs.used.bytes` | 60 / 61 | B | volumes do convidado (VMware Tools) | pelo vCenter | — |
+| `fs.max.pct` | 62 | % | volume mais cheio | pelo vCenter | — |
 | `availability.up` | 40 | 0/1 | ligada | ligada | ligada |
 
 VMs desligadas gravam só a alocação (vCPU, RAM, disco) e `availability.up = 0`.
@@ -44,6 +46,13 @@ vCenter por baixo. O botão **Testar conexão** da integração mostra, para uma
 os nomes das métricas que este vCD devolve.
 
 Rede por VM depende da versão do vCD. Se não vier, cadastre também o vCenter por baixo.
+
+### vCenter completando o vCloud
+
+Com o vCenter que hospeda o vCD também cadastrado, a coleta do vCenter acha cada VM do vCloud pelo MoRef e grava
+nela os volumes do sistema (`attributes.volumes` = `[{path, cap, free, fs}]` e métricas 60 a 62), o disco usado
+(`committed`), uptime, rede, IOPS e CPU Ready, sem criar uma VM duplicada. Isso resolve o vCD que não manda
+`disk.used.latest`. Desligue com `options.vcd_merge = false` na integração do vCenter.
 
 ## Onde fica guardado (camadas)
 
@@ -113,12 +122,22 @@ Resposta:
 
 Ativo de outro tenant responde 404, igual a um ativo inexistente.
 
+## O que o cliente não vê
+
+Para sessões que não são do administrador global, a API tira dos ativos o host ESXi, cluster, resource pool,
+pasta, MoRef, provider VDC, nome do vCenter, `external_id` e a integração de origem. Nas VMs do vCloud o
+`hostname` também sai (o vCD manda ali o host ESXi; o nome vai para `attributes.esx_host`, que só o admin vê).
+
 ## Tela VMs (`/vms.html`)
 
-* Lista com situação, vCPU, RAM, CPU e memória em uso, disco usado/provisionado e rede, com ordenação
-  por coluna, filtro por tenant (admin), situação e busca. Cliente vê só as suas VMs.
+* Painel da frota, um por cliente (o cliente vê só o seu ambiente; o admin filtra por tenant): indicadores de
+  servidores ligados, problemas ativos, média de CPU e memória, volume mais cheio e tráfego; cards por VM com
+  CPU, memória e disco coloridos pela saúde (atenção 85/90/90 %, crítico 95/97/97 %); maior consumo; problemas
+  ativos; discos com menos espaço (limites 90 e 97 %); sistemas operacionais e uptime. Atualiza a cada minuto.
+* Visualização em tabela com ordenação por coluna, filtro por situação (inclusive "em atenção") e busca.
+* O detalhe da VM mostra os volumes do sistema e os gráficos.
 * **Gráficos**: períodos de 1 hora a 1 ano ou datas escolhidas; CPU e memória (média e pico), disco
-  usado x provisionado, leitura/escrita em disco, IOPS, rede recebida/enviada, CPU Ready. O endereço
+  usado x provisionado, volume mais cheio, espaço nos volumes, leitura/escrita em disco, IOPS, rede recebida/enviada, CPU Ready. O endereço
   guarda a VM e o período (`/vms.html?id=42&period=7d`) para compartilhar o link.
 * No Inventário, VMs, hosts, VDCs e datastores têm o botão **Gráficos**, que abre a mesma tela.
 * Gráficos com Chart.js 4.4.1 (MIT) versionado em `frontend/public/assets/vendor/`, sem CDN (CSP

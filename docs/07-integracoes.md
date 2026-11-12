@@ -67,6 +67,16 @@ inteira, gravação no banco incluída, levou ~7,5 s.
 VM desligada aparece como "desligada" (não "fora"); template não entra no inventário. VM apagada no vCenter sai
 do inventário na coleta seguinte, com o histórico mantido.
 
+**Volumes do sistema convidado.** Com VMware Tools rodando, o vCenter informa cada volume do Windows/Linux
+(`C:\`, `F:\`, `/`…) com tamanho e espaço livre. O OpenMon grava isso em `attributes.volumes` e nas métricas
+`fs.capacity.bytes`, `fs.used.bytes` e `fs.max.pct` (volume mais cheio), que alimentam a tela VMs e o alerta
+recomendado "Volume de disco da VM acima de 90%".
+
+**vCenter por baixo do vCloud.** Se o vCenter que hospeda as VMs do vCloud também estiver cadastrado, a coleta do
+vCenter não cria uma segunda cópia dessas VMs: acha a VM do vCloud pelo MoRef (`vm-1234`) e completa nela os
+volumes, o disco usado, o uptime, a rede, os IOPS e o CPU Ready. CPU, memória e leitura/escrita continuam vindo
+do vCloud. Para desligar, use `{"vcd_merge": false}` em Avançado.
+
 ## VMware Cloud Director (vCloud)
 
 Tipo **VMware vCloud Director** em Integrações (roda no mesmo serviço `openmon-collector@vmware`, sem mudar o banco).

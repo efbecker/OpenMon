@@ -10,7 +10,8 @@
   // ifAdminStatus / ifOperStatus (IF-MIB)
   const OPER = { 1: "up", 2: "down", 3: "testing", 5: "dormant", 6: "ausente", 7: "down (camada inferior)" };
   const STATUS = { up: ["tag-ok", "no ar"], down: ["tag-bad", "fora"], warning: ["tag-auto", "aviso"],
-    unknown: ["tag-off", "desconhecido"], maintenance: ["tag-you", "manutenção"] };
+    unknown: ["tag-off", "desconhecido"], maintenance: ["tag-you", "manutenção"], powered_off: ["tag-off", "desligada"],
+    suspended: ["tag-off", "suspensa"] };
   // Tipos com séries de CPU/memória/disco/rede ou armazenamento: abrem os gráficos por período (vms.html)
   const CHARTS = new Set(["vm", "hypervisor_host", "datacenter", "datastore", "backup_repository"]);
   const params = new URLSearchParams(location.search);

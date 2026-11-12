@@ -526,17 +526,22 @@ async def poll(integ: Integration, w: Writer) -> str:
         items.append({"external_id": f"vm:{mid}", "asset_type": "vm", "name": name, "tenant_id": info["tenant_id"],
                       "parent_id": vdc_ids[f"vdc:{_uuid(m.get('vdc'))}"][0],
                       "status": STATUS_VM.get(str(m.get("status") or "").upper(), "unknown"),
-                      "hostname": m.get("hostName") or None, "ip": m.get("ipAddress"), "vendor": "VMware",
+                      "ip": m.get("ipAddress"), "vendor": "VMware",
                       "os_name": m.get("guestOs"),
                       "attributes": {"vcpu": m.get("numberOfCpus"), "memory_bytes": (m.get("memoryMB") or 0) * MB,
                                      "guest_os": m.get("guestOs"), "power_state": m.get("status"),
                                      "org": info["org"], "vdc": info["name"], "vapp": m.get("containerName"),
                                      "folder": f"{info['org']}/{info['name']}", "moref": m.get("moref"),
                                      "storage_profile": m.get("storageProfileName"), "hypervisor": "vcloud",
+                                     # hostName do Query Service é o host ESXi, não o nome da VM (só o admin vê)
+                                     "esx_host": m.get("hostName") or None, "vc_name": m.get("vcName"),
                                      "disk_bytes": (float(m["totalStorageAllocatedMb"]) * MB if m.get("totalStorageAllocatedMb")
                                                     else disks.get(mid)),
                                      **({"created_at": str(created)} if created else {})}})
     vm_ids = await w.assets_bulk(items)
+    # Versões antigas gravavam o host ESXi como hostname da VM
+    await w.conn.execute("UPDATE assets SET hostname = NULL WHERE integration_id = $1 AND asset_type = 'vm' "
+                         "AND hostname IS NOT NULL", integ.id)
     on = with_disk = 0
     for m in vms:
         key = f"vm:{_uuid(m.get('href'))}"
