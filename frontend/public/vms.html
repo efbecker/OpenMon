@@ -37,7 +37,7 @@
     </div>
   </header>
 
-  <main class="page wide" id="main" hidden>
+  <main class="page wide xwide" id="main" hidden>
     <section class="card" id="detail" hidden>
       <div class="section-head">
         <div>
@@ -63,43 +63,89 @@
       <p class="error-text" id="d-error" hidden></p>
       <p class="muted" id="d-empty" hidden>Sem leituras neste período. A coleta grava uma amostra por minuto; se a VM
         acabou de aparecer, aguarde alguns minutos.</p>
+      <div id="d-volumes-box" hidden>
+        <h3 class="subhead">Volumes do sistema</h3>
+        <div id="d-volumes"></div>
+      </div>
       <div class="charts" id="charts"></div>
     </section>
 
-    <section class="card" id="list-card">
-      <div class="section-head">
+    <div id="list-card" class="fleet">
+      <section class="fleet-head">
         <div>
-          <h2>Máquinas virtuais <span class="count" id="count"></span></h2>
-          <p class="muted small" id="intro">VMs do vCenter, vCloud e Hyper-V com a última leitura de CPU, memória, disco e
-            rede. Abra uma VM para ver os gráficos por período.</p>
+          <div class="eyebrow" id="f-eyebrow">Máquinas virtuais</div>
+          <h1 class="fleet-title" id="f-title">Servidores</h1>
         </div>
-        <div class="head-actions">
-          <select class="filter" id="filter-tenant" aria-label="Filtrar por tenant"><option value="">Todos os tenants</option></select>
-          <select class="filter" id="filter-state" aria-label="Filtrar por situação">
-            <option value="">Todas</option><option value="on">Ligadas</option><option value="off">Desligadas</option>
-          </select>
-          <input class="filter" id="filter-q" type="search" maxlength="100" placeholder="Nome, host ou IP" aria-label="Buscar">
+        <div class="fleet-side">
+          <span class="health-pill" id="f-health" hidden></span>
+          <span class="muted small" id="f-updated"></span>
+        </div>
+      </section>
+      <div class="fleet-filters">
+        <select class="filter" id="filter-tenant" aria-label="Filtrar por tenant"><option value="">Todos os tenants</option></select>
+        <select class="filter" id="filter-state" aria-label="Filtrar por situação">
+          <option value="">Todas</option><option value="on">Ligadas</option><option value="off">Desligadas</option>
+          <option value="attention">Em atenção</option>
+        </select>
+        <input class="filter" id="filter-q" type="search" maxlength="100" placeholder="Nome ou IP" aria-label="Buscar">
+        <div class="seg" role="group" aria-label="Visualização">
+          <button type="button" class="seg-btn on" id="view-cards" aria-pressed="true">Cards</button>
+          <button type="button" class="seg-btn" id="view-table" aria-pressed="false">Tabela</button>
         </div>
       </div>
-      <div class="stats" id="summary"></div>
       <p class="error-text" id="list-error" hidden></p>
-      <div class="table-wrap">
-        <table class="table" id="table">
-          <thead><tr>
-            <th><button type="button" class="sort" data-sort="name">Nome</button></th>
-            <th class="col-tenant">Tenant</th><th>Situação</th>
-            <th><button type="button" class="sort" data-sort="vcpu">vCPU</button></th>
-            <th><button type="button" class="sort" data-sort="mem">Memória</button></th>
-            <th><button type="button" class="sort" data-sort="cpu">CPU</button></th>
-            <th><button type="button" class="sort" data-sort="mempct">Mem. usada</button></th>
-            <th><button type="button" class="sort" data-sort="disk">Disco</button></th>
-            <th><button type="button" class="sort" data-sort="net">Rede ↓ / ↑</button></th>
-            <th></th></tr></thead>
-          <tbody></tbody>
-        </table>
+      <div class="kpis" id="kpis"></div>
+
+      <div class="fleet-grid">
+        <section class="card fleet-main">
+          <div class="panel-head">
+            <h2>Frota de servidores <span class="count" id="count"></span></h2>
+            <div class="fleet-legend" id="f-legend"></div>
+          </div>
+          <div class="health-bar" id="f-bar"></div>
+          <div class="vm-cards" id="cards"></div>
+          <div class="table-wrap" id="table-box" hidden>
+            <table class="table" id="table">
+              <thead><tr>
+                <th><button type="button" class="sort" data-sort="name">Nome</button></th>
+                <th class="col-tenant">Tenant</th><th>Situação</th>
+                <th><button type="button" class="sort" data-sort="vcpu">vCPU</button></th>
+                <th><button type="button" class="sort" data-sort="mem">Memória</button></th>
+                <th><button type="button" class="sort" data-sort="cpu">CPU</button></th>
+                <th><button type="button" class="sort" data-sort="mempct">Mem. usada</button></th>
+                <th><button type="button" class="sort" data-sort="disk">Disco</button></th>
+                <th><button type="button" class="sort" data-sort="net">Rede ↓ / ↑</button></th>
+                <th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="muted small" id="empty" hidden>Nenhuma VM encontrada.</p>
+        </section>
+        <section class="card fleet-side-card">
+          <div class="panel-head"><h2>Maior consumo <span class="count">agora</span></h2></div>
+          <h3 class="mini-head">CPU</h3>
+          <ol class="rank" id="top-cpu"></ol>
+          <h3 class="mini-head">Memória</h3>
+          <ol class="rank" id="top-mem"></ol>
+        </section>
       </div>
-      <p class="muted small" id="empty" hidden>Nenhuma VM encontrada.</p>
-    </section>
+
+      <div class="fleet-bottom">
+        <section class="card">
+          <div class="panel-head"><h2>Problemas ativos</h2><span class="muted small">severidade · duração</span></div>
+          <div id="problems"></div>
+        </section>
+        <section class="card">
+          <div class="panel-head"><h2>Discos com menos espaço <span class="count" id="vol-count"></span></h2>
+            <span class="muted small">limites <span class="warn-text">90%</span> · <span class="bad">97%</span></span></div>
+          <div id="volumes"></div>
+        </section>
+        <section class="card">
+          <div class="panel-head"><h2>Sistemas e uptime</h2><span class="muted small" id="os-common"></span></div>
+          <div class="os-box" id="os"></div>
+        </section>
+      </div>
+    </div>
   </main>
 </body>
 </html>

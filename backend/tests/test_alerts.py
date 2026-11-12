@@ -204,7 +204,7 @@ def test_availability_backup_integration_and_storage(client, outbox):
         "WHERE external_id = 'job:j1'", iid, job)
 
     r = client.post("/api/alerts/triggers/recommended", headers=h(csrf))
-    assert len(r.json()["created"]) == 7
+    assert len(r.json()["created"]) == 8
     assert client.post("/api/alerts/triggers/recommended", headers=h(csrf)).json()["created"] == []
     tick(client)
     msgs = {r[0]: r[1] for r in sql("SELECT a.name, p.message FROM alert_problems p "
