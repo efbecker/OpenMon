@@ -158,6 +158,14 @@
             <textarea id="f-hosts" rows="3" spellcheck="false" placeholder="hv01.empresa.local&#10;hv02.empresa.local"></textarea>
             <span class="muted small">Uma sessão WinRM por host traz todas as VMs dele de uma vez (JSON).</span>
           </label>
+          <label class="field" data-kinds="veeam">
+            <span class="label">API do Veeam</span>
+            <select id="f-veeam-api">
+              <option value="auto">Automático (pela porta)</option>
+              <option value="vbr">API REST do Backup &amp; Replication (9419)</option>
+              <option value="em">Enterprise Manager (9398)</option>
+            </select>
+          </label>
           <label class="field" data-kinds="veeam vmware_vcd">
             <span class="label">Versão da API REST</span>
             <input id="f-api-version" maxlength="20" spellcheck="false" placeholder="1.1-rev1">

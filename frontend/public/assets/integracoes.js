@@ -228,6 +228,7 @@
     $("f-hosts").value = (o.hosts || []).join("\n");
     $("f-https").checked = o.https !== false;
     $("f-api-version").value = o.api_version || "";
+    $("f-veeam-api").value = o.api || "auto";
     $("f-vcd-auth").value = o.auth || "password";
     $("f-orgs").value = (o.orgs || []).join("\n");
     $("f-timeout").value = o.timeout_ms || 2000;
@@ -284,7 +285,7 @@
         b.options = { transport: $("f-transport").value, https: $("f-https").checked,
           hosts: $("f-hosts").value.split(/\s+/).map((h) => h.trim()).filter(Boolean) };
       } else if (kind === "veeam") {
-        b.options = { api_version: $("f-api-version").value.trim() || null };
+        b.options = { api: $("f-veeam-api").value, api_version: $("f-api-version").value.trim() || null };
       } else if (kind === "vmware_vcd") {
         b.options = { api_version: $("f-api-version").value.trim() || null, auth: $("f-vcd-auth").value,
           orgs: $("f-orgs").value.split(/\n+/).map((x) => x.trim()).filter(Boolean) };
@@ -292,6 +293,13 @@
     }
     return b;
   }
+
+  // Enterprise Manager escuta na 9398 e a API do VBR na 9419: troca a porta se ela ainda é a padrão da outra
+  $("f-veeam-api").addEventListener("change", () => {
+    const api = $("f-veeam-api").value, port = $("f-port").value;
+    if (api === "em" && port === "9419") $("f-port").value = 9398;
+    if (api === "vbr" && port === "9398") $("f-port").value = 9419;
+  });
 
   $("f-kind").addEventListener("change", () => {
     const kind = $("f-kind").value;
